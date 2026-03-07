@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -48,13 +49,19 @@ func TestBooksListRendersColumnsAndRows(t *testing.T) {
 	}
 
 	body := rr.Body.String()
-	checks := []string{"Books", "Add Book", "Cover", "Title", "Author", "Category", "My price", "In-stock", "View/Edit", "Book One"}
+	checks := []string{"Books", "Add Book", "Cover", "Title", "Author", "Category", "My price", "In-stock", "Publish", "View/Edit", "Book One"}
 	for _, check := range checks {
 		if !strings.Contains(body, check) {
 			t.Fatalf("expected body to contain %q", check)
 		}
 	}
 	assertAdminNav(t, body, "/admin/books")
+	if !strings.Contains(body, `action="/admin/books/1/publish"`) {
+		t.Fatalf("expected publish toggle action in list row")
+	}
+	if !regexp.MustCompile(`\(\d+d\)`).MatchString(body) {
+		t.Fatalf("expected recency indicator like (Xd)")
+	}
 }
 
 func TestBooksListTrailingSlashRedirectsToCanonicalPath(t *testing.T) {
@@ -294,6 +301,106 @@ func TestBookEditAndInlineStockToggle(t *testing.T) {
 	}
 }
 
+func TestBookPublishAndUnpublishActions(t *testing.T) {
+	supplierStore := suppliers.NewMemoryStore()
+	_, err := supplierStore.Create(suppliers.Input{Name: "A1", WhatsApp: "+91-9", Location: "Bengaluru"})
+	if err != nil {
+		t.Fatalf("create supplier: %v", err)
+	}
+	bookStore := books.NewMemoryStore()
+	_, err = bookStore.Create(books.CreateInput{
+		Title:      "Book",
+		Cover:      books.Cover{Data: []byte("img"), MimeType: "image/png"},
+		SupplierID: 1,
+		Category:   "Fiction",
+		Format:     "Paperback",
+		Condition:  "Very good",
+		MRP:        100,
+		MyPrice:    90,
+	})
+	if err != nil {
+		t.Fatalf("create book: %v", err)
+	}
+	s := NewServer(supplierStore, bookStore)
+
+	publishReq := httptest.NewRequest(http.MethodPost, "/admin/books/1/publish", nil)
+	publishRR := httptest.NewRecorder()
+	s.Handler().ServeHTTP(publishRR, publishReq)
+	if publishRR.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 on publish, got %d", publishRR.Code)
+	}
+	if publishRR.Header().Get("Location") != "/admin/books?flash=Book+published+successfully." {
+		t.Fatalf("unexpected publish redirect: %s", publishRR.Header().Get("Location"))
+	}
+	afterPublish, err := bookStore.Get(1)
+	if err != nil {
+		t.Fatalf("get after publish: %v", err)
+	}
+	if !afterPublish.IsPublished {
+		t.Fatalf("expected published=true after publish")
+	}
+
+	unpublishReq := httptest.NewRequest(http.MethodPost, "/admin/books/1/unpublish", nil)
+	unpublishRR := httptest.NewRecorder()
+	s.Handler().ServeHTTP(unpublishRR, unpublishReq)
+	if unpublishRR.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 on unpublish, got %d", unpublishRR.Code)
+	}
+	if unpublishRR.Header().Get("Location") != "/admin/books?flash=Book+unpublished+successfully." {
+		t.Fatalf("unexpected unpublish redirect: %s", unpublishRR.Header().Get("Location"))
+	}
+	afterUnpublish, err := bookStore.Get(1)
+	if err != nil {
+		t.Fatalf("get after unpublish: %v", err)
+	}
+	if afterUnpublish.IsPublished {
+		t.Fatalf("expected published=false after unpublish")
+	}
+}
+
+func TestBookPublishFailsWhenOutOfStockShowsToast(t *testing.T) {
+	supplierStore := suppliers.NewMemoryStore()
+	_, err := supplierStore.Create(suppliers.Input{Name: "A1", WhatsApp: "+91-9", Location: "Bengaluru"})
+	if err != nil {
+		t.Fatalf("create supplier: %v", err)
+	}
+	bookStore := books.NewMemoryStore()
+	_, err = bookStore.Create(books.CreateInput{
+		Title:      "Book",
+		Cover:      books.Cover{Data: []byte("img"), MimeType: "image/png"},
+		SupplierID: 1,
+		Category:   "Fiction",
+		Format:     "Paperback",
+		Condition:  "Very good",
+		MRP:        100,
+		MyPrice:    90,
+	})
+	if err != nil {
+		t.Fatalf("create book: %v", err)
+	}
+	if _, err := bookStore.SetInStock(1, false); err != nil {
+		t.Fatalf("set in-stock false: %v", err)
+	}
+
+	s := NewServer(supplierStore, bookStore)
+	req := httptest.NewRequest(http.MethodPost, "/admin/books/1/publish", nil)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", rr.Code)
+	}
+	if rr.Header().Get("Location") != "/admin/books?error=Cannot+publish+book+because+it+is+out+of+stock." {
+		t.Fatalf("unexpected redirect: %s", rr.Header().Get("Location"))
+	}
+	listReq := httptest.NewRequest(http.MethodGet, rr.Header().Get("Location"), nil)
+	listRR := httptest.NewRecorder()
+	s.Handler().ServeHTTP(listRR, listReq)
+	if !strings.Contains(listRR.Body.String(), "Cannot publish book because it is out of stock.") {
+		t.Fatalf("expected toast error on books list")
+	}
+}
+
 func TestBookCoverRouteReturnsImage(t *testing.T) {
 	supplierStore := suppliers.NewMemoryStore()
 	_, err := supplierStore.Create(suppliers.Input{Name: "A1", WhatsApp: "+91-9", Location: "Bengaluru"})
@@ -348,6 +455,43 @@ func TestBookNewIncludesEnhancementScript(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "/assets/books-form.js") {
 		t.Fatalf("expected books form enhancement script tag")
+	}
+}
+
+func TestBookEditIncludesPublishToggleAndRecency(t *testing.T) {
+	supplierStore := suppliers.NewMemoryStore()
+	_, err := supplierStore.Create(suppliers.Input{Name: "A1", WhatsApp: "+91-9", Location: "Bengaluru"})
+	if err != nil {
+		t.Fatalf("create supplier: %v", err)
+	}
+	bookStore := books.NewMemoryStore()
+	_, err = bookStore.Create(books.CreateInput{
+		Title:      "Book",
+		Cover:      books.Cover{Data: []byte("img"), MimeType: "image/png"},
+		SupplierID: 1,
+		Category:   "Fiction",
+		Format:     "Paperback",
+		Condition:  "Very good",
+		MRP:        100,
+		MyPrice:    80,
+	})
+	if err != nil {
+		t.Fatalf("create book: %v", err)
+	}
+	s := NewServer(supplierStore, bookStore)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/admin/books/1", nil)
+	s.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `action="/admin/books/1/publish?from=edit"`) {
+		t.Fatalf("expected edit publish toggle action")
+	}
+	if !regexp.MustCompile(`\(\d+d\)`).MatchString(body) {
+		t.Fatalf("expected recency indicator on edit page")
 	}
 }
 

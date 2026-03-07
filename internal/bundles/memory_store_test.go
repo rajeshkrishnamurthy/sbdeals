@@ -27,6 +27,15 @@ func TestMemoryStoreCreateListAndGet(t *testing.T) {
 	if len(created.Books) != 2 {
 		t.Fatalf("expected 2 books, got %d", len(created.Books))
 	}
+	if created.IsPublished {
+		t.Fatalf("expected created bundle to default IsPublished=false")
+	}
+	if created.PublishedAt != nil {
+		t.Fatalf("expected created bundle PublishedAt=nil")
+	}
+	if created.UnpublishedAt == nil {
+		t.Fatalf("expected created bundle UnpublishedAt initialized")
+	}
 
 	items, err := store.List()
 	if err != nil {
@@ -45,6 +54,64 @@ func TestMemoryStoreCreateListAndGet(t *testing.T) {
 	}
 	if fetched.Name != "Starter Bundle" || fetched.Category != "Fiction" {
 		t.Fatalf("unexpected fetched bundle: %+v", fetched)
+	}
+}
+
+func TestMemoryStorePublishUnpublishAndPublishRule(t *testing.T) {
+	store := newMemoryStoreFixture()
+	created, err := store.Create(CreateInput{
+		Name:              "Starter Bundle",
+		SupplierID:        1,
+		Category:          "Fiction",
+		AllowedConditions: []string{"Very good", "Good as new"},
+		BookIDs:           []int{10, 11},
+		BundlePrice:       499,
+	})
+	if err != nil {
+		t.Fatalf("create returned error: %v", err)
+	}
+
+	published, err := store.Publish(created.ID)
+	if err != nil {
+		t.Fatalf("publish returned error: %v", err)
+	}
+	if !published.IsPublished || published.PublishedAt == nil {
+		t.Fatalf("expected published state, got %+v", published)
+	}
+
+	unpublished, err := store.Unpublish(created.ID)
+	if err != nil {
+		t.Fatalf("unpublish returned error: %v", err)
+	}
+	if unpublished.IsPublished {
+		t.Fatalf("expected unpublished state")
+	}
+
+	storeWithOutOfStock := NewMemoryStore(
+		map[int]string{1: "Supplier One"},
+		[]PickerBook{
+			{BookID: 10, Title: "Book A", Author: "Author A", SupplierID: 1, Category: "Fiction", Condition: "Very good", MRP: 400, MyPrice: 250, InStock: true},
+			{BookID: 11, Title: "Book B", Author: "Author B", SupplierID: 1, Category: "Fiction", Condition: "Good as new", MRP: 500, MyPrice: 300, InStock: false},
+		},
+	)
+	createdOutOfStock, err := storeWithOutOfStock.Create(CreateInput{
+		Name:              "Out Bundle",
+		SupplierID:        1,
+		Category:          "Fiction",
+		AllowedConditions: []string{"Very good", "Good as new"},
+		BookIDs:           []int{10, 11},
+		BundlePrice:       399,
+	})
+	if err != nil {
+		t.Fatalf("create with out-of-stock returned error: %v", err)
+	}
+	_, err = storeWithOutOfStock.Publish(createdOutOfStock.ID)
+	var outOfStockErr *ErrCannotPublishWithOutOfStockBooks
+	if !errors.As(err, &outOfStockErr) {
+		t.Fatalf("expected ErrCannotPublishWithOutOfStockBooks, got %v", err)
+	}
+	if len(outOfStockErr.BookTitles) != 1 || outOfStockErr.BookTitles[0] != "Book B" {
+		t.Fatalf("unexpected out-of-stock titles: %+v", outOfStockErr.BookTitles)
 	}
 }
 
@@ -114,9 +181,9 @@ func newMemoryStoreFixture() *MemoryStore {
 	return NewMemoryStore(
 		map[int]string{1: "Supplier One"},
 		[]PickerBook{
-			{BookID: 10, Title: "Book A", Author: "Author A", SupplierID: 1, Category: "Fiction", Condition: "Very good", MRP: 400, MyPrice: 250},
-			{BookID: 11, Title: "Book B", Author: "Author B", SupplierID: 1, Category: "Fiction", Condition: "Good as new", MRP: 500, MyPrice: 300},
-			{BookID: 12, Title: "Book C", Author: "Author C", SupplierID: 1, Category: "Fiction", Condition: "Used", MRP: 350, MyPrice: 200},
+			{BookID: 10, Title: "Book A", Author: "Author A", SupplierID: 1, Category: "Fiction", Condition: "Very good", MRP: 400, MyPrice: 250, InStock: true},
+			{BookID: 11, Title: "Book B", Author: "Author B", SupplierID: 1, Category: "Fiction", Condition: "Good as new", MRP: 500, MyPrice: 300, InStock: true},
+			{BookID: 12, Title: "Book C", Author: "Author C", SupplierID: 1, Category: "Fiction", Condition: "Used", MRP: 350, MyPrice: 200, InStock: true},
 		},
 	)
 }

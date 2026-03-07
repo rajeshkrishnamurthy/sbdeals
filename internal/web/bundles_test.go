@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -24,13 +25,19 @@ func TestBundlesListRendersColumnsAndNav(t *testing.T) {
 	}
 
 	body := rr.Body.String()
-	checks := []string{"Bundles", "Add Bundle", "Supplier", "Category", "Allowed condition(s)", "# of books", "Bundle price", "View/Edit"}
+	checks := []string{"Bundles", "Add Bundle", "Supplier", "Category", "Allowed condition(s)", "# of books", "Bundle price", "Publish", "View/Edit"}
 	for _, check := range checks {
 		if !strings.Contains(body, check) {
 			t.Fatalf("expected body to contain %q", check)
 		}
 	}
 	assertAdminNav(t, body, "/admin/bundles")
+	if !strings.Contains(body, `action="/admin/bundles/1/publish"`) {
+		t.Fatalf("expected publish toggle action in list row")
+	}
+	if !regexp.MustCompile(`\(\d+d\)`).MatchString(body) {
+		t.Fatalf("expected recency indicator like (Xd)")
+	}
 }
 
 func TestCreateBundleSuccess(t *testing.T) {
@@ -167,6 +174,36 @@ func TestBundleNewIncludesEnhancementScript(t *testing.T) {
 	}
 }
 
+func TestBundleEditIncludesPublishToggleAndRecency(t *testing.T) {
+	supplierStore, bundleStore := newBundleStores(t)
+	created, err := bundleStore.Create(bundles.CreateInput{
+		Name:              "Starter",
+		SupplierID:        1,
+		Category:          "Fiction",
+		AllowedConditions: []string{"Very good", "Good as new"},
+		BookIDs:           []int{10, 11},
+		BundlePrice:       499,
+	})
+	if err != nil {
+		t.Fatalf("seed create failed: %v", err)
+	}
+	s := NewServerWithStores(supplierStore, books.NewMemoryStore(), bundleStore)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/admin/bundles/"+strconv.Itoa(created.ID), nil)
+	s.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `action="/admin/bundles/1/publish?from=edit"`) {
+		t.Fatalf("expected edit publish toggle action")
+	}
+	if !regexp.MustCompile(`\(\d+d\)`).MatchString(body) {
+		t.Fatalf("expected recency indicator on edit page")
+	}
+}
+
 func TestBundleNewUsesInternalScrollForEligibleBooks(t *testing.T) {
 	s := newBundleTestServer(t)
 	rr := httptest.NewRecorder()
@@ -216,26 +253,36 @@ func newBundleStores(t *testing.T) (*suppliers.MemoryStore, *bundles.MemoryStore
 
 	supplierNames := map[int]string{first.ID: first.Name, second.ID: second.Name}
 	pickerBooks := []bundles.PickerBook{
-		{BookID: 10, Title: "Book A", Author: "Author A", SupplierID: first.ID, Category: "Fiction", Condition: "Very good", MRP: 400, MyPrice: 250},
-		{BookID: 11, Title: "Book B", Author: "Author B", SupplierID: first.ID, Category: "Fiction", Condition: "Good as new", MRP: 500, MyPrice: 300},
-		{BookID: 12, Title: "Book C", Author: "Author C", SupplierID: first.ID, Category: "Fiction", Condition: "Used", MRP: 350, MyPrice: 220},
-		{BookID: 20, Title: "Book Z", Author: "Author Z", SupplierID: second.ID, Category: "Non-Fiction", Condition: "Very good", MRP: 280, MyPrice: 180},
+		{BookID: 10, Title: "Book A", Author: "Author A", SupplierID: first.ID, Category: "Fiction", Condition: "Very good", MRP: 400, MyPrice: 250, InStock: true},
+		{BookID: 11, Title: "Book B", Author: "Author B", SupplierID: first.ID, Category: "Fiction", Condition: "Good as new", MRP: 500, MyPrice: 300, InStock: true},
+		{BookID: 12, Title: "Book C", Author: "Author C", SupplierID: first.ID, Category: "Fiction", Condition: "Used", MRP: 350, MyPrice: 220, InStock: true},
+		{BookID: 20, Title: "Book Z", Author: "Author Z", SupplierID: second.ID, Category: "Non-Fiction", Condition: "Very good", MRP: 280, MyPrice: 180, InStock: true},
 	}
 	return supplierStore, bundles.NewMemoryStore(supplierNames, pickerBooks)
 }
 
 func TestBundlePathRouteRoundTrip(t *testing.T) {
-	id, ok := parseBundlePath("/admin/bundles/123")
-	if !ok || id != 123 {
-		t.Fatalf("unexpected parse result: %v %v", id, ok)
+	id, action, ok := parseBundlePath("/admin/bundles/123")
+	if !ok || id != 123 || action != "" {
+		t.Fatalf("unexpected parse result: %v %v %v", id, action, ok)
 	}
 
-	_, ok = parseBundlePath("/admin/bundles/123/books")
+	id, action, ok = parseBundlePath("/admin/bundles/123/publish")
+	if !ok || id != 123 || action != "publish" {
+		t.Fatalf("unexpected publish parse result: %v %v %v", id, action, ok)
+	}
+
+	id, action, ok = parseBundlePath("/admin/bundles/123/unpublish")
+	if !ok || id != 123 || action != "unpublish" {
+		t.Fatalf("unexpected unpublish parse result: %v %v %v", id, action, ok)
+	}
+
+	_, _, ok = parseBundlePath("/admin/bundles/123/books")
 	if ok {
 		t.Fatalf("expected parse failure for nested path")
 	}
 
-	_, ok = parseBundlePath("/admin/bundles/" + strconv.Itoa(0))
+	_, _, ok = parseBundlePath("/admin/bundles/" + strconv.Itoa(0))
 	if ok {
 		t.Fatalf("expected invalid parse for id 0")
 	}
@@ -255,5 +302,99 @@ func TestBundlesFormAssetRouteServesJavaScript(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "bundle-book-search") {
 		t.Fatalf("expected bundles-form.js content")
+	}
+}
+
+func TestBundlePublishAndUnpublishActions(t *testing.T) {
+	supplierStore, bundleStore := newBundleStores(t)
+	created, err := bundleStore.Create(bundles.CreateInput{
+		Name:              "Starter",
+		SupplierID:        1,
+		Category:          "Fiction",
+		AllowedConditions: []string{"Very good", "Good as new"},
+		BookIDs:           []int{10, 11},
+		BundlePrice:       499,
+	})
+	if err != nil {
+		t.Fatalf("seed create failed: %v", err)
+	}
+
+	s := NewServerWithStores(supplierStore, books.NewMemoryStore(), bundleStore)
+
+	publishReq := httptest.NewRequest(http.MethodPost, "/admin/bundles/"+strconv.Itoa(created.ID)+"/publish", nil)
+	publishRR := httptest.NewRecorder()
+	s.Handler().ServeHTTP(publishRR, publishReq)
+	if publishRR.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 on publish, got %d", publishRR.Code)
+	}
+	if publishRR.Header().Get("Location") != "/admin/bundles?flash=Bundle+published+successfully." {
+		t.Fatalf("unexpected publish redirect: %s", publishRR.Header().Get("Location"))
+	}
+	afterPublish, err := bundleStore.Get(created.ID)
+	if err != nil {
+		t.Fatalf("get after publish: %v", err)
+	}
+	if !afterPublish.IsPublished {
+		t.Fatalf("expected published=true")
+	}
+
+	unpublishReq := httptest.NewRequest(http.MethodPost, "/admin/bundles/"+strconv.Itoa(created.ID)+"/unpublish", nil)
+	unpublishRR := httptest.NewRecorder()
+	s.Handler().ServeHTTP(unpublishRR, unpublishReq)
+	if unpublishRR.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 on unpublish, got %d", unpublishRR.Code)
+	}
+	if unpublishRR.Header().Get("Location") != "/admin/bundles?flash=Bundle+unpublished+successfully." {
+		t.Fatalf("unexpected unpublish redirect: %s", unpublishRR.Header().Get("Location"))
+	}
+	afterUnpublish, err := bundleStore.Get(created.ID)
+	if err != nil {
+		t.Fatalf("get after unpublish: %v", err)
+	}
+	if afterUnpublish.IsPublished {
+		t.Fatalf("expected published=false")
+	}
+}
+
+func TestBundlePublishFailsWithOutOfStockTitlesShowsToast(t *testing.T) {
+	supplierStore := suppliers.NewMemoryStore()
+	first, err := supplierStore.Create(suppliers.Input{Name: "Supplier A", WhatsApp: "+91-1", Location: "Bengaluru"})
+	if err != nil {
+		t.Fatalf("create supplier 1 failed: %v", err)
+	}
+	supplierNames := map[int]string{first.ID: first.Name}
+	bundleStore := bundles.NewMemoryStore(supplierNames, []bundles.PickerBook{
+		{BookID: 10, Title: "Book A", Author: "Author A", SupplierID: first.ID, Category: "Fiction", Condition: "Very good", MRP: 400, MyPrice: 250, InStock: true},
+		{BookID: 11, Title: "Book B", Author: "Author B", SupplierID: first.ID, Category: "Fiction", Condition: "Good as new", MRP: 500, MyPrice: 300, InStock: false},
+	})
+	created, err := bundleStore.Create(bundles.CreateInput{
+		Name:              "Starter",
+		SupplierID:        first.ID,
+		Category:          "Fiction",
+		AllowedConditions: []string{"Very good", "Good as new"},
+		BookIDs:           []int{10, 11},
+		BundlePrice:       499,
+	})
+	if err != nil {
+		t.Fatalf("seed create failed: %v", err)
+	}
+
+	s := NewServerWithStores(supplierStore, books.NewMemoryStore(), bundleStore)
+	req := httptest.NewRequest(http.MethodPost, "/admin/bundles/"+strconv.Itoa(created.ID)+"/publish", nil)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", rr.Code)
+	}
+	if !strings.HasPrefix(rr.Header().Get("Location"), "/admin/bundles?error=") {
+		t.Fatalf("unexpected redirect: %s", rr.Header().Get("Location"))
+	}
+	listReq := httptest.NewRequest(http.MethodGet, rr.Header().Get("Location"), nil)
+	listRR := httptest.NewRecorder()
+	s.Handler().ServeHTTP(listRR, listReq)
+	body := listRR.Body.String()
+	if !strings.Contains(body, "Cannot publish bundle because these books are out of stock: Book B.") {
+		t.Fatalf("expected bundle out-of-stock toast message")
 	}
 }

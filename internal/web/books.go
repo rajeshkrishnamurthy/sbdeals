@@ -84,19 +84,41 @@ func (s *Server) handleBookItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.handleBookItemAction(w, r, id, action) {
+		http.NotFound(w, r)
+	}
+}
+
+func (s *Server) handleBookItemAction(w http.ResponseWriter, r *http.Request, id int, action string) bool {
 	switch action {
 	case "cover":
 		if r.Method != http.MethodGet {
 			writeMethodNotAllowed(w, http.MethodGet)
-			return
+			return true
 		}
 		s.serveBookCover(w, r, id)
+		return true
 	case "stock":
 		if r.Method != http.MethodPost {
 			writeMethodNotAllowed(w, http.MethodPost)
-			return
+			return true
 		}
 		s.updateBookInStockInline(w, r, id)
+		return true
+	case "publish":
+		if r.Method != http.MethodPost && r.Method != http.MethodPatch {
+			writeMethodNotAllowed(w, http.MethodPost, http.MethodPatch)
+			return true
+		}
+		s.publishBook(w, r, id)
+		return true
+	case "unpublish":
+		if r.Method != http.MethodPost && r.Method != http.MethodPatch {
+			writeMethodNotAllowed(w, http.MethodPost, http.MethodPatch)
+			return true
+		}
+		s.unpublishBook(w, r, id)
+		return true
 	case "":
 		switch r.Method {
 		case http.MethodGet:
@@ -106,9 +128,9 @@ func (s *Server) handleBookItem(w http.ResponseWriter, r *http.Request) {
 		default:
 			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
 		}
-	default:
-		http.NotFound(w, r)
+		return true
 	}
+	return false
 }
 
 func (s *Server) renderBooksList(w http.ResponseWriter, r *http.Request) {
@@ -233,21 +255,28 @@ func (s *Server) renderBookDetail(w http.ResponseWriter, r *http.Request, bookID
 		SubmitLabel:       "Save Changes",
 		ActiveSection:     "books",
 		Flash:             r.URL.Query().Get("flash"),
+		ValidationToast:   strings.TrimSpace(r.URL.Query().Get("error")),
 		Input:             input,
 		SupplierOptions:   suppliersList,
 		Errors:            map[string]string{},
 		ShowInStockEditor: true,
 		HasExistingCover:  true,
 		BookID:            bookID,
+		ShowPublishToggle: true,
+		PublishAction:     fmt.Sprintf("/admin/books/%d/%s?from=edit", bookID, toggleActionPath(book.IsPublished)),
+		PublishLabel:      publishStateLabel(book.IsPublished),
+		PublishRecency:    publishRecencyLabel(book.IsPublished, book.PublishedAt, book.UnpublishedAt),
 		Summary:           summary,
 	}))
 }
 
 func (s *Server) updateBook(w http.ResponseWriter, r *http.Request, bookID int) {
-	if _, err := s.bookStore.Get(bookID); errors.Is(err, books.ErrNotFound) {
+	currentBook, err := s.bookStore.Get(bookID)
+	if errors.Is(err, books.ErrNotFound) {
 		http.NotFound(w, r)
 		return
-	} else if err != nil {
+	}
+	if err != nil {
 		http.Error(w, "failed to load book", http.StatusInternalServerError)
 		return
 	}
@@ -292,6 +321,10 @@ func (s *Server) updateBook(w http.ResponseWriter, r *http.Request, bookID int) 
 			ShowInStockEditor: true,
 			HasExistingCover:  true,
 			BookID:            bookID,
+			ShowPublishToggle: true,
+			PublishAction:     fmt.Sprintf("/admin/books/%d/%s?from=edit", bookID, toggleActionPath(currentBook.IsPublished)),
+			PublishLabel:      publishStateLabel(currentBook.IsPublished),
+			PublishRecency:    publishRecencyLabel(currentBook.IsPublished, currentBook.PublishedAt, currentBook.UnpublishedAt),
 			Summary:           summary,
 		}))
 		return
@@ -352,6 +385,49 @@ func (s *Server) updateBookInStockInline(w http.ResponseWriter, r *http.Request,
 	http.Redirect(w, r, "/admin/books?flash="+url.QueryEscape("Book stock updated successfully."), http.StatusSeeOther)
 }
 
+func (s *Server) publishBook(w http.ResponseWriter, r *http.Request, bookID int) {
+	if _, err := s.bookStore.Publish(bookID); err != nil {
+		if errors.Is(err, books.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		if errors.Is(err, books.ErrCannotPublishOutOfStock) {
+			http.Redirect(w, r, bookPublishRedirectPath(r, bookID, "", "Cannot publish book because it is out of stock."), http.StatusSeeOther)
+			return
+		}
+		http.Error(w, "failed to publish book", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, bookPublishRedirectPath(r, bookID, "Book published successfully.", ""), http.StatusSeeOther)
+}
+
+func (s *Server) unpublishBook(w http.ResponseWriter, r *http.Request, bookID int) {
+	if _, err := s.bookStore.Unpublish(bookID); err != nil {
+		if errors.Is(err, books.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "failed to unpublish book", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, bookPublishRedirectPath(r, bookID, "Book unpublished successfully.", ""), http.StatusSeeOther)
+}
+
+func bookPublishRedirectPath(r *http.Request, bookID int, flash string, errorMessage string) string {
+	base := "/admin/books"
+	if r.URL.Query().Get("from") == "edit" {
+		base = fmt.Sprintf("/admin/books/%d", bookID)
+	}
+	switch {
+	case flash != "":
+		return base + "?flash=" + url.QueryEscape(flash)
+	case errorMessage != "":
+		return base + "?error=" + url.QueryEscape(errorMessage)
+	default:
+		return base
+	}
+}
+
 func (s *Server) serveBookCover(w http.ResponseWriter, r *http.Request, bookID int) {
 	cover, err := s.bookStore.GetCover(bookID)
 	if errors.Is(err, books.ErrNotFound) {
@@ -394,7 +470,7 @@ func parseBookPath(path string) (int, string, bool) {
 		return id, "", true
 	}
 	action := parts[1]
-	if action != "cover" && action != "stock" {
+	if action != "cover" && action != "stock" && action != "publish" && action != "unpublish" {
 		return 0, "", false
 	}
 	return id, action, true
@@ -586,6 +662,13 @@ func stockValueToLabel(value string) string {
 	return "Yes"
 }
 
+func toggleActionPath(isPublished bool) string {
+	if isPublished {
+		return "unpublish"
+	}
+	return "publish"
+}
+
 func formatDecimal(value float64) string {
 	return strconv.FormatFloat(value, 'f', 2, 64)
 }
@@ -652,6 +735,10 @@ type bookFormViewModel struct {
 	ShowInStockEditor bool
 	HasExistingCover  bool
 	BookID            int
+	ShowPublishToggle bool
+	PublishAction     string
+	PublishLabel      string
+	PublishRecency    string
 	Summary           *bookSummaryViewModel
 }
 
@@ -677,6 +764,10 @@ type bookFormViewOptions struct {
 	ShowInStockEditor bool
 	HasExistingCover  bool
 	BookID            int
+	ShowPublishToggle bool
+	PublishAction     string
+	PublishLabel      string
+	PublishRecency    string
 	Summary           *bookSummaryViewModel
 }
 
@@ -705,6 +796,10 @@ func buildBookFormView(options bookFormViewOptions) bookFormViewModel {
 		ShowInStockEditor: options.ShowInStockEditor,
 		HasExistingCover:  options.HasExistingCover,
 		BookID:            options.BookID,
+		ShowPublishToggle: options.ShowPublishToggle,
+		PublishAction:     options.PublishAction,
+		PublishLabel:      options.PublishLabel,
+		PublishRecency:    options.PublishRecency,
 		Summary:           options.Summary,
 	}
 }
@@ -720,8 +815,11 @@ func (s *Server) renderBookForm(w http.ResponseWriter, data bookFormViewModel) {
 }
 
 var booksListTemplate = template.Must(template.New("books-list").Funcs(template.FuncMap{
-	"adminNav": adminNav,
-	"money":    func(v float64) string { return fmt.Sprintf("%.2f", v) },
+	"adminNav":         adminNav,
+	"money":            func(v float64) string { return fmt.Sprintf("%.2f", v) },
+	"publishRecency":   publishRecencyLabel,
+	"publishState":     publishStateLabel,
+	"toggleActionPath": toggleActionPath,
 }).Parse(`<!doctype html>
 <html lang="en">
 <head>
@@ -750,6 +848,11 @@ var booksListTemplate = template.Must(template.New("books-list").Funcs(template.
     .inline-stock { display:flex; gap:6px; align-items:center; }
     .inline-stock select { padding:5px 6px; border:1px solid var(--line); border-radius:6px; background:white; }
     .inline-stock button { padding:5px 8px; border:1px solid var(--line); border-radius:6px; background:white; cursor:pointer; }
+    .inline-publish { display:flex; gap:8px; align-items:center; }
+    .toggle { padding:5px 9px; border-radius:999px; border:1px solid var(--line); cursor:pointer; font-weight:600; font-size:0.8rem; }
+    .toggle.on { background:#dcfce7; color:#166534; border-color:#86efac; }
+    .toggle.off { background:#f3f4f6; color:#374151; border-color:#d1d5db; }
+    .recency { color:var(--muted); font-size:0.8rem; }
     .price { font-variant-numeric: tabular-nums; }
     .toast-error { position:fixed; top:16px; right:16px; max-width:min(420px, 90vw); z-index:999; margin:0; padding:10px 12px; border-radius:10px; background:#fee2e2; color:#991b1b; border:1px solid #fecaca; box-shadow:0 8px 24px rgba(0,0,0,0.12); }
   </style>
@@ -776,6 +879,7 @@ var booksListTemplate = template.Must(template.New("books-list").Funcs(template.
           <th>Category</th>
           <th>My price</th>
           <th>In-stock</th>
+          <th>Publish</th>
           <th>Action</th>
         </tr>
       </thead>
@@ -805,12 +909,18 @@ var booksListTemplate = template.Must(template.New("books-list").Funcs(template.
               <button type="submit">Save</button>
             </form>
           </td>
+          <td>
+            <form class="inline-publish" method="post" action="/admin/books/{{.ID}}/{{toggleActionPath .IsPublished}}">
+              <button class="toggle {{if .IsPublished}}on{{else}}off{{end}}" type="submit">{{publishState .IsPublished}}</button>
+              <span class="recency">{{publishRecency .IsPublished .PublishedAt .UnpublishedAt}}</span>
+            </form>
+          </td>
           <td><a class="row-link" href="/admin/books/{{.ID}}">View/Edit</a></td>
         </tr>
         {{end}}
       {{else}}
         <tr>
-          <td colspan="7">No books yet. Click "Add Book" to create one.</td>
+          <td colspan="8">No books yet. Click "Add Book" to create one.</td>
         </tr>
       {{end}}
       </tbody>
@@ -850,6 +960,11 @@ var booksFormTemplate = template.Must(template.New("books-form").Funcs(template.
     .thumb-box { width:32px; height:48px; border:1px solid #d4dce6; background:#f2f4f7; display:flex; align-items:center; justify-content:center; border-radius:4px; margin-bottom:8px; }
     .thumb-image { width:32px; height:48px; object-fit:contain; object-position:center; display:block; }
     .thumb-placeholder { font-size:9px; color:#6b7280; text-align:center; line-height:1.1; }
+    .publish-box { margin:0 0 14px; padding:12px; background:#f8fafc; border:1px solid var(--line); border-radius:8px; display:flex; gap:10px; align-items:center; }
+    .toggle { padding:6px 10px; border-radius:999px; border:1px solid var(--line); cursor:pointer; font-weight:600; font-size:0.85rem; background:white; }
+    .toggle.on { background:#dcfce7; color:#166534; border-color:#86efac; }
+    .toggle.off { background:#f3f4f6; color:#374151; border-color:#d1d5db; }
+    .recency { color:var(--muted); font-size:0.85rem; }
     .hidden { display:none; }
     .toast-error { position:fixed; top:16px; right:16px; max-width:min(420px, 90vw); z-index:999; margin:0; padding:10px 12px; border-radius:10px; background:#fee2e2; color:#991b1b; border:1px solid #fecaca; box-shadow:0 8px 24px rgba(0,0,0,0.12); }
   </style>
@@ -869,6 +984,15 @@ var booksFormTemplate = template.Must(template.New("books-form").Funcs(template.
     <div class="summary">
       <strong>{{.Summary.Title}}</strong><br>
       Supplier: {{.Summary.SupplierName}} | Category: {{.Summary.Category}} | My price: {{.Summary.MyPrice}} | In-stock: {{.Summary.InStock}}
+    </div>
+    {{end}}
+
+    {{if .ShowPublishToggle}}
+    <div class="publish-box">
+      <form method="post" action="{{.PublishAction}}">
+        <button class="toggle {{if eq .PublishLabel "Published"}}on{{else}}off{{end}}" type="submit">{{.PublishLabel}}</button>
+      </form>
+      <span class="recency">{{.PublishRecency}}</span>
     </div>
     {{end}}
 

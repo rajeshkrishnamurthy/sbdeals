@@ -20,7 +20,7 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 }
 
 func (s *PostgresStore) List() ([]ListItem, error) {
-	query := `SELECT b.id, b.name, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, COUNT(bb.book_id) AS book_count FROM bundles b JOIN suppliers s ON s.id = b.supplier_id LEFT JOIN bundle_books bb ON bb.bundle_id = b.id GROUP BY b.id, b.name, s.name, b.category, b.allowed_conditions, b.bundle_price ORDER BY b.id ASC`
+	query := `SELECT b.id, b.name, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, COUNT(bb.book_id) AS book_count, b.is_published, b.published_at, b.unpublished_at FROM bundles b JOIN suppliers s ON s.id = b.supplier_id LEFT JOIN bundle_books bb ON bb.bundle_id = b.id GROUP BY b.id, b.name, s.name, b.category, b.allowed_conditions, b.bundle_price, b.is_published, b.published_at, b.unpublished_at ORDER BY b.id ASC`
 	rows, err := s.db.QueryContext(context.Background(), query)
 	if err != nil {
 		return nil, err
@@ -31,10 +31,18 @@ func (s *PostgresStore) List() ([]ListItem, error) {
 	for rows.Next() {
 		var item ListItem
 		var allowedConditions string
-		if err := rows.Scan(&item.ID, &item.Name, &item.SupplierName, &item.Category, &allowedConditions, &item.BundlePrice, &item.BookCount); err != nil {
+		var publishedAt sql.NullTime
+		var unpublishedAt sql.NullTime
+		if err := rows.Scan(&item.ID, &item.Name, &item.SupplierName, &item.Category, &allowedConditions, &item.BundlePrice, &item.BookCount, &item.IsPublished, &publishedAt, &unpublishedAt); err != nil {
 			return nil, err
 		}
 		item.AllowedConditions = splitConditions(allowedConditions)
+		if publishedAt.Valid {
+			item.PublishedAt = &publishedAt.Time
+		}
+		if unpublishedAt.Valid {
+			item.UnpublishedAt = &unpublishedAt.Time
+		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -127,8 +135,50 @@ func (s *PostgresStore) Update(id int, input UpdateInput) (Bundle, error) {
 	return s.Get(id)
 }
 
+func (s *PostgresStore) Publish(id int) (Bundle, error) {
+	ctx := context.Background()
+	query := `UPDATE bundles b SET is_published = TRUE, published_at = NOW(), updated_at = NOW() WHERE b.id = $1 AND NOT EXISTS (SELECT 1 FROM bundle_books bb JOIN books bk ON bk.id = bb.book_id WHERE bb.bundle_id = b.id AND bk.in_stock = FALSE) RETURNING b.id`
+
+	var bundleID int
+	if err := s.db.QueryRowContext(ctx, query, id).Scan(&bundleID); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return Bundle{}, err
+		}
+		bundle, getErr := s.Get(id)
+		if errors.Is(getErr, ErrNotFound) {
+			return Bundle{}, ErrNotFound
+		}
+		if getErr != nil {
+			return Bundle{}, getErr
+		}
+		outOfStockTitles, titlesErr := s.outOfStockBookTitles(bundle.ID)
+		if titlesErr != nil {
+			return Bundle{}, titlesErr
+		}
+		if len(outOfStockTitles) > 0 {
+			return Bundle{}, &ErrCannotPublishWithOutOfStockBooks{BookTitles: outOfStockTitles}
+		}
+		return Bundle{}, ErrNotFound
+	}
+
+	return s.Get(bundleID)
+}
+
+func (s *PostgresStore) Unpublish(id int) (Bundle, error) {
+	ctx := context.Background()
+	query := `UPDATE bundles SET is_published = FALSE, unpublished_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING id`
+	var bundleID int
+	if err := s.db.QueryRowContext(ctx, query, id).Scan(&bundleID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Bundle{}, ErrNotFound
+		}
+		return Bundle{}, err
+	}
+	return s.Get(bundleID)
+}
+
 func (s *PostgresStore) ListBooksForPicker() ([]PickerBook, error) {
-	query := `SELECT id, title, author, supplier_id, category, condition, mrp, my_price, bundle_price FROM books ORDER BY id ASC`
+	query := `SELECT id, title, author, supplier_id, category, condition, mrp, my_price, bundle_price, in_stock FROM books ORDER BY id ASC`
 	rows, err := s.db.QueryContext(context.Background(), query)
 	if err != nil {
 		return nil, err
@@ -139,7 +189,7 @@ func (s *PostgresStore) ListBooksForPicker() ([]PickerBook, error) {
 	for rows.Next() {
 		var item PickerBook
 		var bundlePrice sql.NullFloat64
-		if err := rows.Scan(&item.BookID, &item.Title, &item.Author, &item.SupplierID, &item.Category, &item.Condition, &item.MRP, &item.MyPrice, &bundlePrice); err != nil {
+		if err := rows.Scan(&item.BookID, &item.Title, &item.Author, &item.SupplierID, &item.Category, &item.Condition, &item.MRP, &item.MyPrice, &bundlePrice, &item.InStock); err != nil {
 			return nil, err
 		}
 		if bundlePrice.Valid {
@@ -154,23 +204,31 @@ func (s *PostgresStore) ListBooksForPicker() ([]PickerBook, error) {
 }
 
 func queryBundleByID(ctx context.Context, db queryRowContextExecutor, id int) (Bundle, error) {
-	query := `SELECT b.id, b.name, b.supplier_id, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, b.notes FROM bundles b JOIN suppliers s ON s.id = b.supplier_id WHERE b.id = $1`
+	query := `SELECT b.id, b.name, b.supplier_id, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, b.notes, b.is_published, b.published_at, b.unpublished_at FROM bundles b JOIN suppliers s ON s.id = b.supplier_id WHERE b.id = $1`
 	row := db.QueryRowContext(ctx, query, id)
 
 	var bundle Bundle
 	var allowedConditions string
-	if err := row.Scan(&bundle.ID, &bundle.Name, &bundle.SupplierID, &bundle.SupplierName, &bundle.Category, &allowedConditions, &bundle.BundlePrice, &bundle.Notes); err != nil {
+	var publishedAt sql.NullTime
+	var unpublishedAt sql.NullTime
+	if err := row.Scan(&bundle.ID, &bundle.Name, &bundle.SupplierID, &bundle.SupplierName, &bundle.Category, &allowedConditions, &bundle.BundlePrice, &bundle.Notes, &bundle.IsPublished, &publishedAt, &unpublishedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Bundle{}, ErrNotFound
 		}
 		return Bundle{}, err
 	}
 	bundle.AllowedConditions = splitConditions(allowedConditions)
+	if publishedAt.Valid {
+		bundle.PublishedAt = &publishedAt.Time
+	}
+	if unpublishedAt.Valid {
+		bundle.UnpublishedAt = &unpublishedAt.Time
+	}
 	return bundle, nil
 }
 
 func queryBundleBooks(ctx context.Context, db queryContextExecutor, bundleID int) ([]BundleBook, []int, error) {
-	query := `SELECT bb.book_id, b.title, b.author, b.supplier_id, b.category, b.condition, b.mrp, b.my_price, b.bundle_price FROM bundle_books bb JOIN books b ON b.id = bb.book_id WHERE bb.bundle_id = $1 ORDER BY bb.position ASC`
+	query := `SELECT bb.book_id, b.title, b.author, b.supplier_id, b.category, b.condition, b.mrp, b.my_price, b.bundle_price, b.in_stock FROM bundle_books bb JOIN books b ON b.id = bb.book_id WHERE bb.bundle_id = $1 ORDER BY bb.position ASC`
 	rows, err := db.QueryContext(ctx, query, bundleID)
 	if err != nil {
 		return nil, nil, err
@@ -182,7 +240,7 @@ func queryBundleBooks(ctx context.Context, db queryContextExecutor, bundleID int
 	for rows.Next() {
 		var item BundleBook
 		var bundlePrice sql.NullFloat64
-		if err := rows.Scan(&item.BookID, &item.Title, &item.Author, &item.SupplierID, &item.Category, &item.Condition, &item.MRP, &item.MyPrice, &bundlePrice); err != nil {
+		if err := rows.Scan(&item.BookID, &item.Title, &item.Author, &item.SupplierID, &item.Category, &item.Condition, &item.MRP, &item.MyPrice, &bundlePrice, &item.InStock); err != nil {
 			return nil, nil, err
 		}
 		if bundlePrice.Valid {
@@ -205,6 +263,28 @@ func insertBundleBooks(ctx context.Context, db execContextExecutor, bundleID int
 		}
 	}
 	return nil
+}
+
+func (s *PostgresStore) outOfStockBookTitles(bundleID int) ([]string, error) {
+	query := `SELECT b.title FROM bundle_books bb JOIN books b ON b.id = bb.book_id WHERE bb.bundle_id = $1 AND b.in_stock = FALSE ORDER BY b.title ASC`
+	rows, err := s.db.QueryContext(context.Background(), query, bundleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	titles := make([]string, 0)
+	for rows.Next() {
+		var title string
+		if err := rows.Scan(&title); err != nil {
+			return nil, err
+		}
+		titles = append(titles, title)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return titles, nil
 }
 
 func joinConditions(values []string) string {

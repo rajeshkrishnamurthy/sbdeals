@@ -1,5 +1,7 @@
 package books
 
+import "time"
+
 // Book is the full admin view model for a supplier-specific book listing.
 type Book struct {
 	ID            int
@@ -15,6 +17,9 @@ type Book struct {
 	Author        string
 	Notes         string
 	InStock       bool
+	IsPublished   bool
+	PublishedAt   *time.Time
+	UnpublishedAt *time.Time
 }
 
 // Cover contains binary image bytes and associated MIME type.
@@ -25,13 +30,16 @@ type Cover struct {
 
 // ListItem is a low-clutter row projection for the admin books list.
 type ListItem struct {
-	ID       int
-	Title    string
-	Author   string
-	Category string
-	MyPrice  float64
-	InStock  bool
-	HasCover bool
+	ID            int
+	Title         string
+	Author        string
+	Category      string
+	MyPrice       float64
+	InStock       bool
+	HasCover      bool
+	IsPublished   bool
+	PublishedAt   *time.Time
+	UnpublishedAt *time.Time
 }
 
 // CreateInput captures book fields for create flow.

@@ -31,6 +31,15 @@ func TestMemoryStoreCreateDefaultsInStockAndList(t *testing.T) {
 	if !created.InStock {
 		t.Fatalf("expected created book to default InStock=true")
 	}
+	if created.IsPublished {
+		t.Fatalf("expected created book to default IsPublished=false")
+	}
+	if created.PublishedAt != nil {
+		t.Fatalf("expected created book PublishedAt=nil")
+	}
+	if created.UnpublishedAt == nil {
+		t.Fatalf("expected created book UnpublishedAt to be initialized")
+	}
 
 	items, err := store.List()
 	if err != nil {
@@ -44,6 +53,50 @@ func TestMemoryStoreCreateDefaultsInStockAndList(t *testing.T) {
 	}
 	if !items[0].HasCover {
 		t.Fatalf("expected list item to report cover presence")
+	}
+}
+
+func TestMemoryStorePublishUnpublishAndPublishRule(t *testing.T) {
+	store := NewMemoryStore()
+	created, err := store.Create(CreateInput{
+		Title:      "Dune",
+		Cover:      Cover{Data: []byte("cover-1"), MimeType: "image/png"},
+		SupplierID: 2,
+		Category:   "Fiction",
+		Format:     "Hardcover",
+		Condition:  "Good as new",
+		MRP:        899,
+		MyPrice:    499,
+	})
+	if err != nil {
+		t.Fatalf("create returned error: %v", err)
+	}
+
+	published, err := store.Publish(created.ID)
+	if err != nil {
+		t.Fatalf("publish returned error: %v", err)
+	}
+	if !published.IsPublished || published.PublishedAt == nil {
+		t.Fatalf("expected published state, got %+v", published)
+	}
+
+	unpublished, err := store.Unpublish(created.ID)
+	if err != nil {
+		t.Fatalf("unpublish returned error: %v", err)
+	}
+	if unpublished.IsPublished {
+		t.Fatalf("expected unpublished state")
+	}
+	if unpublished.UnpublishedAt == nil {
+		t.Fatalf("expected unpublished timestamp")
+	}
+
+	if _, err := store.SetInStock(created.ID, false); err != nil {
+		t.Fatalf("set in stock false: %v", err)
+	}
+	_, err = store.Publish(created.ID)
+	if !errors.Is(err, ErrCannotPublishOutOfStock) {
+		t.Fatalf("expected ErrCannotPublishOutOfStock, got %v", err)
 	}
 }
 

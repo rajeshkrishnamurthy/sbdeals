@@ -3,6 +3,7 @@ package bundles
 import (
 	"sort"
 	"sync"
+	"time"
 )
 
 // MemoryStore keeps bundles in memory for tests and local fallback use.
@@ -47,6 +48,9 @@ func (s *MemoryStore) List() ([]ListItem, error) {
 			AllowedConditions: cloneStringSlice(bundle.AllowedConditions),
 			BookCount:         len(bundle.Books),
 			BundlePrice:       bundle.BundlePrice,
+			IsPublished:       bundle.IsPublished,
+			PublishedAt:       cloneTimePointer(bundle.PublishedAt),
+			UnpublishedAt:     cloneTimePointer(bundle.UnpublishedAt),
 		})
 	}
 	return items, nil
@@ -91,8 +95,43 @@ func (s *MemoryStore) Update(id int, input UpdateInput) (Bundle, error) {
 		BundlePrice:       input.BundlePrice,
 		Notes:             input.Notes,
 	})
+	updated.IsPublished = s.bundles[index].IsPublished
+	updated.PublishedAt = cloneTimePointer(s.bundles[index].PublishedAt)
+	updated.UnpublishedAt = cloneTimePointer(s.bundles[index].UnpublishedAt)
 	s.bundles[index] = updated
 	return cloneBundle(updated), nil
+}
+
+func (s *MemoryStore) Publish(id int) (Bundle, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	index := s.indexByID(id)
+	if index < 0 {
+		return Bundle{}, ErrNotFound
+	}
+	outOfStock := outOfStockTitlesFromBooks(s.bundles[index].Books)
+	if len(outOfStock) > 0 {
+		return Bundle{}, &ErrCannotPublishWithOutOfStockBooks{BookTitles: outOfStock}
+	}
+	now := time.Now().UTC()
+	s.bundles[index].IsPublished = true
+	s.bundles[index].PublishedAt = &now
+	return cloneBundle(s.bundles[index]), nil
+}
+
+func (s *MemoryStore) Unpublish(id int) (Bundle, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	index := s.indexByID(id)
+	if index < 0 {
+		return Bundle{}, ErrNotFound
+	}
+	now := time.Now().UTC()
+	s.bundles[index].IsPublished = false
+	s.bundles[index].UnpublishedAt = &now
+	return cloneBundle(s.bundles[index]), nil
 }
 
 func (s *MemoryStore) ListBooksForPicker() ([]PickerBook, error) {
@@ -123,9 +162,11 @@ func (s *MemoryStore) bundleFromInput(id int, input CreateInput) Bundle {
 				MRP:         candidate.MRP,
 				MyPrice:     candidate.MyPrice,
 				BundlePrice: cloneFloatPointer(candidate.BundlePrice),
+				InStock:     candidate.InStock,
 			})
 		}
 	}
+	now := time.Now().UTC()
 
 	return Bundle{
 		ID:                id,
@@ -138,6 +179,9 @@ func (s *MemoryStore) bundleFromInput(id int, input CreateInput) Bundle {
 		Notes:             input.Notes,
 		BookIDs:           cloneIntSlice(input.BookIDs),
 		Books:             books,
+		IsPublished:       false,
+		PublishedAt:       nil,
+		UnpublishedAt:     &now,
 	}
 }
 
@@ -160,6 +204,8 @@ func cloneBundle(in Bundle) Bundle {
 		copyBook.BundlePrice = cloneFloatPointer(book.BundlePrice)
 		out.Books[i] = copyBook
 	}
+	out.PublishedAt = cloneTimePointer(in.PublishedAt)
+	out.UnpublishedAt = cloneTimePointer(in.UnpublishedAt)
 	return out
 }
 
@@ -187,4 +233,23 @@ func cloneFloatPointer(value *float64) *float64 {
 	}
 	copied := *value
 	return &copied
+}
+
+func cloneTimePointer(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	copied := *value
+	return &copied
+}
+
+func outOfStockTitlesFromBooks(books []BundleBook) []string {
+	titles := make([]string, 0)
+	for _, book := range books {
+		if !book.InStock {
+			titles = append(titles, book.Title)
+		}
+	}
+	sort.Strings(titles)
+	return titles
 }

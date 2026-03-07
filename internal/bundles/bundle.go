@@ -1,20 +1,50 @@
 package bundles
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+	"sort"
+	"time"
+)
 
 var ErrNotFound = errors.New("bundle not found")
 
+type ErrCannotPublishWithOutOfStockBooks struct {
+	BookTitles []string
+}
+
+func (e *ErrCannotPublishWithOutOfStockBooks) Error() string {
+	if len(e.BookTitles) == 0 {
+		return "bundle cannot be published because included books are out of stock"
+	}
+	titles := append([]string(nil), e.BookTitles...)
+	sort.Strings(titles)
+	return fmt.Sprintf("bundle cannot be published because these books are out of stock: %s", joinTitles(titles))
+}
+
+func joinTitles(titles []string) string {
+	if len(titles) == 0 {
+		return ""
+	}
+	out := fmt.Sprintf("%q", titles[0])
+	for i := 1; i < len(titles); i++ {
+		out += ", " + fmt.Sprintf("%q", titles[i])
+	}
+	return out
+}
+
 // BundleBook is a book entry inside a bundle.
 type BundleBook struct {
-	BookID       int
-	Title        string
-	Author       string
-	SupplierID   int
-	Category     string
-	Condition    string
-	MRP          float64
-	MyPrice      float64
-	BundlePrice  *float64
+	BookID      int
+	Title       string
+	Author      string
+	SupplierID  int
+	Category    string
+	Condition   string
+	MRP         float64
+	MyPrice     float64
+	BundlePrice *float64
+	InStock     bool
 }
 
 // PickerBook represents an eligible book candidate for the bundle picker.
@@ -28,6 +58,7 @@ type PickerBook struct {
 	MRP         float64
 	MyPrice     float64
 	BundlePrice *float64
+	InStock     bool
 }
 
 // Bundle is the detailed bundle aggregate used by add/edit screens.
@@ -42,6 +73,9 @@ type Bundle struct {
 	Notes             string
 	BookIDs           []int
 	Books             []BundleBook
+	IsPublished       bool
+	PublishedAt       *time.Time
+	UnpublishedAt     *time.Time
 }
 
 // ListItem is the low-clutter projection for bundles list page.
@@ -53,6 +87,9 @@ type ListItem struct {
 	AllowedConditions []string
 	BookCount         int
 	BundlePrice       float64
+	IsPublished       bool
+	PublishedAt       *time.Time
+	UnpublishedAt     *time.Time
 }
 
 // CreateInput captures required and optional fields for bundle creation.
@@ -83,5 +120,7 @@ type Store interface {
 	Create(input CreateInput) (Bundle, error)
 	Get(id int) (Bundle, error)
 	Update(id int, input UpdateInput) (Bundle, error)
+	Publish(id int) (Bundle, error)
+	Unpublish(id int) (Bundle, error)
 	ListBooksForPicker() ([]PickerBook, error)
 }

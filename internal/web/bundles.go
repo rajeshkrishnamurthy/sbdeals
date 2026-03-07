@@ -65,19 +65,36 @@ func (s *Server) handleBundleItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bundleID, ok := parseBundlePath(r.URL.Path)
+	bundleID, action, ok := parseBundlePath(r.URL.Path)
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
 
-	switch r.Method {
-	case http.MethodGet:
-		s.renderBundleDetail(w, r, bundleID)
-	case http.MethodPost:
-		s.updateBundle(w, r, bundleID)
+	switch action {
+	case "publish":
+		if r.Method != http.MethodPost && r.Method != http.MethodPatch {
+			writeMethodNotAllowed(w, http.MethodPost, http.MethodPatch)
+			return
+		}
+		s.publishBundle(w, r, bundleID)
+	case "unpublish":
+		if r.Method != http.MethodPost && r.Method != http.MethodPatch {
+			writeMethodNotAllowed(w, http.MethodPost, http.MethodPatch)
+			return
+		}
+		s.unpublishBundle(w, r, bundleID)
+	case "":
+		switch r.Method {
+		case http.MethodGet:
+			s.renderBundleDetail(w, r, bundleID)
+		case http.MethodPost:
+			s.updateBundle(w, r, bundleID)
+		default:
+			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		}
 	default:
-		writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		http.NotFound(w, r)
 	}
 }
 
@@ -89,9 +106,10 @@ func (s *Server) renderBundlesList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	view := bundlesListViewModel{
-		Flash:         r.URL.Query().Get("flash"),
-		ActiveSection: "bundles",
-		Bundles:       items,
+		Flash:           r.URL.Query().Get("flash"),
+		ValidationToast: strings.TrimSpace(r.URL.Query().Get("error")),
+		ActiveSection:   "bundles",
+		Bundles:         items,
 	}
 	if err := bundlesListTemplate.Execute(w, view); err != nil {
 		http.Error(w, "failed to render bundles list", http.StatusInternalServerError)
@@ -184,26 +202,33 @@ func (s *Server) renderBundleDetail(w http.ResponseWriter, r *http.Request, bund
 	}
 
 	s.renderBundleForm(w, buildBundleFormView(bundleFormViewOptions{
-		PageTitle:       "View/Edit Bundle",
-		Action:          fmt.Sprintf("/admin/bundles/%d", bundleID),
-		SubmitLabel:     "Save Changes",
-		ActiveSection:   "bundles",
-		Flash:           r.URL.Query().Get("flash"),
-		Input:           input,
-		SupplierOptions: suppliersList,
-		CandidateBooks:  pickerBooks,
-		SelectedBooks:   selectedBooks,
-		Errors:          map[string]string{},
-		ShowSummary:     true,
-		Summary:         summary,
+		PageTitle:         "View/Edit Bundle",
+		Action:            fmt.Sprintf("/admin/bundles/%d", bundleID),
+		SubmitLabel:       "Save Changes",
+		ActiveSection:     "bundles",
+		Flash:             r.URL.Query().Get("flash"),
+		ValidationToast:   strings.TrimSpace(r.URL.Query().Get("error")),
+		Input:             input,
+		SupplierOptions:   suppliersList,
+		CandidateBooks:    pickerBooks,
+		SelectedBooks:     selectedBooks,
+		Errors:            map[string]string{},
+		ShowSummary:       true,
+		ShowPublishToggle: true,
+		PublishAction:     fmt.Sprintf("/admin/bundles/%d/%s?from=edit", bundleID, toggleActionPath(bundle.IsPublished)),
+		PublishLabel:      publishStateLabel(bundle.IsPublished),
+		PublishRecency:    publishRecencyLabel(bundle.IsPublished, bundle.PublishedAt, bundle.UnpublishedAt),
+		Summary:           summary,
 	}))
 }
 
 func (s *Server) updateBundle(w http.ResponseWriter, r *http.Request, bundleID int) {
-	if _, err := s.bundleStore.Get(bundleID); errors.Is(err, bundles.ErrNotFound) {
+	currentBundle, err := s.bundleStore.Get(bundleID)
+	if errors.Is(err, bundles.ErrNotFound) {
 		http.NotFound(w, r)
 		return
-	} else if err != nil {
+	}
+	if err != nil {
 		http.Error(w, "failed to load bundle", http.StatusInternalServerError)
 		return
 	}
@@ -231,18 +256,22 @@ func (s *Server) updateBundle(w http.ResponseWriter, r *http.Request, bundleID i
 			BundlePrice:  input.BundlePrice,
 		}
 		s.renderBundleForm(w, buildBundleFormView(bundleFormViewOptions{
-			PageTitle:       "View/Edit Bundle",
-			Action:          fmt.Sprintf("/admin/bundles/%d", bundleID),
-			SubmitLabel:     "Save Changes",
-			ActiveSection:   "bundles",
-			Input:           input,
-			SupplierOptions: suppliersList,
-			CandidateBooks:  pickerBooks,
-			SelectedBooks:   selectedBooks,
-			Errors:          fieldErrors,
-			ValidationToast: buildValidationToast(fieldErrors, bundleValidationFieldOrder),
-			ShowSummary:     true,
-			Summary:         summary,
+			PageTitle:         "View/Edit Bundle",
+			Action:            fmt.Sprintf("/admin/bundles/%d", bundleID),
+			SubmitLabel:       "Save Changes",
+			ActiveSection:     "bundles",
+			Input:             input,
+			SupplierOptions:   suppliersList,
+			CandidateBooks:    pickerBooks,
+			SelectedBooks:     selectedBooks,
+			Errors:            fieldErrors,
+			ValidationToast:   buildValidationToast(fieldErrors, bundleValidationFieldOrder),
+			ShowSummary:       true,
+			ShowPublishToggle: true,
+			PublishAction:     fmt.Sprintf("/admin/bundles/%d/%s?from=edit", bundleID, toggleActionPath(currentBundle.IsPublished)),
+			PublishLabel:      publishStateLabel(currentBundle.IsPublished),
+			PublishRecency:    publishRecencyLabel(currentBundle.IsPublished, currentBundle.PublishedAt, currentBundle.UnpublishedAt),
+			Summary:           summary,
 		}))
 		return
 	}
@@ -266,6 +295,57 @@ func (s *Server) updateBundle(w http.ResponseWriter, r *http.Request, bundleID i
 	}
 
 	http.Redirect(w, r, fmt.Sprintf("/admin/bundles/%d?flash=%s", bundleID, url.QueryEscape("Bundle updated successfully.")), http.StatusSeeOther)
+}
+
+func (s *Server) publishBundle(w http.ResponseWriter, r *http.Request, bundleID int) {
+	if _, err := s.bundleStore.Publish(bundleID); err != nil {
+		if errors.Is(err, bundles.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		var outOfStockErr *bundles.ErrCannotPublishWithOutOfStockBooks
+		if errors.As(err, &outOfStockErr) {
+			http.Redirect(w, r, bundlePublishRedirectPath(r, bundleID, "", bundleOutOfStockMessage(outOfStockErr.BookTitles)), http.StatusSeeOther)
+			return
+		}
+		http.Error(w, "failed to publish bundle", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, bundlePublishRedirectPath(r, bundleID, "Bundle published successfully.", ""), http.StatusSeeOther)
+}
+
+func (s *Server) unpublishBundle(w http.ResponseWriter, r *http.Request, bundleID int) {
+	if _, err := s.bundleStore.Unpublish(bundleID); err != nil {
+		if errors.Is(err, bundles.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "failed to unpublish bundle", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, bundlePublishRedirectPath(r, bundleID, "Bundle unpublished successfully.", ""), http.StatusSeeOther)
+}
+
+func bundlePublishRedirectPath(r *http.Request, bundleID int, flash string, errorMessage string) string {
+	base := "/admin/bundles"
+	if r.URL.Query().Get("from") == "edit" {
+		base = fmt.Sprintf("/admin/bundles/%d", bundleID)
+	}
+	switch {
+	case flash != "":
+		return base + "?flash=" + url.QueryEscape(flash)
+	case errorMessage != "":
+		return base + "?error=" + url.QueryEscape(errorMessage)
+	default:
+		return base
+	}
+}
+
+func bundleOutOfStockMessage(titles []string) string {
+	if len(titles) == 0 {
+		return "Cannot publish bundle because one or more included books are out of stock."
+	}
+	return "Cannot publish bundle because these books are out of stock: " + strings.Join(titles, ", ") + "."
 }
 
 func (s *Server) loadBundleFormDependencies() ([]suppliers.Supplier, []bundles.PickerBook, error) {
@@ -466,25 +546,37 @@ func toPickerBooksFromBundle(bundleBooks []bundles.BundleBook) []bundles.PickerB
 			MRP:         book.MRP,
 			MyPrice:     book.MyPrice,
 			BundlePrice: book.BundlePrice,
+			InStock:     book.InStock,
 		})
 	}
 	return items
 }
 
-func parseBundlePath(path string) (int, bool) {
+func parseBundlePath(path string) (int, string, bool) {
 	prefix := "/admin/bundles/"
 	if !strings.HasPrefix(path, prefix) {
-		return 0, false
+		return 0, "", false
 	}
 	rest := strings.TrimPrefix(path, prefix)
-	if rest == "" || strings.Contains(rest, "/") {
-		return 0, false
+	if rest == "" {
+		return 0, "", false
 	}
-	id, err := strconv.Atoi(rest)
+	parts := strings.Split(rest, "/")
+	if len(parts) > 2 {
+		return 0, "", false
+	}
+	id, err := strconv.Atoi(parts[0])
 	if err != nil || id <= 0 {
-		return 0, false
+		return 0, "", false
 	}
-	return id, true
+	if len(parts) == 1 {
+		return id, "", true
+	}
+	action := parts[1]
+	if action != "publish" && action != "unpublish" {
+		return 0, "", false
+	}
+	return id, action, true
 }
 
 func bundleLabel(name string, id int) string {
@@ -533,9 +625,10 @@ func calculateBundleTotals(selected []bundles.PickerBook, bundlePrice float64) b
 }
 
 type bundlesListViewModel struct {
-	Flash         string
-	ActiveSection string
-	Bundles       []bundles.ListItem
+	Flash           string
+	ValidationToast string
+	ActiveSection   string
+	Bundles         []bundles.ListItem
 }
 
 type bundleSummaryViewModel struct {
@@ -557,25 +650,29 @@ type bundleFormInput struct {
 }
 
 type bundleFormViewModel struct {
-	PageTitle        string
-	Action           string
-	SubmitLabel      string
-	ActiveSection    string
-	Flash            string
-	ValidationToast  string
-	Input            bundleFormInput
-	SupplierOptions  []suppliers.Supplier
-	CategoryOptions  []string
-	ConditionOptions []string
-	CandidateBooks   []bundles.PickerBook
-	SelectedBooks    []bundles.PickerBook
-	Errors           map[string]string
-	BundleMRPText    string
-	SumMyPriceText   string
-	SumMyBundleText  string
-	DiscountText     string
-	ShowSummary      bool
-	Summary          *bundleSummaryViewModel
+	PageTitle         string
+	Action            string
+	SubmitLabel       string
+	ActiveSection     string
+	Flash             string
+	ValidationToast   string
+	ShowPublishToggle bool
+	PublishAction     string
+	PublishLabel      string
+	PublishRecency    string
+	Input             bundleFormInput
+	SupplierOptions   []suppliers.Supplier
+	CategoryOptions   []string
+	ConditionOptions  []string
+	CandidateBooks    []bundles.PickerBook
+	SelectedBooks     []bundles.PickerBook
+	Errors            map[string]string
+	BundleMRPText     string
+	SumMyPriceText    string
+	SumMyBundleText   string
+	DiscountText      string
+	ShowSummary       bool
+	Summary           *bundleSummaryViewModel
 }
 
 func (m bundleFormViewModel) HasError(field string) bool {
@@ -597,19 +694,23 @@ func (m bundleFormViewModel) ConditionChecked(condition string) bool {
 }
 
 type bundleFormViewOptions struct {
-	PageTitle       string
-	Action          string
-	SubmitLabel     string
-	ActiveSection   string
-	Flash           string
-	ValidationToast string
-	Input           bundleFormInput
-	SupplierOptions []suppliers.Supplier
-	CandidateBooks  []bundles.PickerBook
-	SelectedBooks   []bundles.PickerBook
-	Errors          map[string]string
-	ShowSummary     bool
-	Summary         *bundleSummaryViewModel
+	PageTitle         string
+	Action            string
+	SubmitLabel       string
+	ActiveSection     string
+	Flash             string
+	ValidationToast   string
+	ShowPublishToggle bool
+	PublishAction     string
+	PublishLabel      string
+	PublishRecency    string
+	Input             bundleFormInput
+	SupplierOptions   []suppliers.Supplier
+	CandidateBooks    []bundles.PickerBook
+	SelectedBooks     []bundles.PickerBook
+	Errors            map[string]string
+	ShowSummary       bool
+	Summary           *bundleSummaryViewModel
 }
 
 func buildBundleFormView(options bundleFormViewOptions) bundleFormViewModel {
@@ -620,25 +721,29 @@ func buildBundleFormView(options bundleFormViewOptions) bundleFormViewModel {
 	totals := calculateBundleTotals(options.SelectedBooks, bundlePrice)
 
 	return bundleFormViewModel{
-		PageTitle:        options.PageTitle,
-		Action:           options.Action,
-		SubmitLabel:      options.SubmitLabel,
-		ActiveSection:    options.ActiveSection,
-		Flash:            options.Flash,
-		ValidationToast:  options.ValidationToast,
-		Input:            options.Input,
-		SupplierOptions:  options.SupplierOptions,
-		CategoryOptions:  bookCategoryOptions,
-		ConditionOptions: bookConditionOptions,
-		CandidateBooks:   options.CandidateBooks,
-		SelectedBooks:    options.SelectedBooks,
-		Errors:           options.Errors,
-		BundleMRPText:    formatDecimal(totals.BundleMRP),
-		SumMyPriceText:   formatDecimal(totals.SumMyPrice),
-		SumMyBundleText:  formatDecimal(totals.SumMyBundlePrice),
-		DiscountText:     formatRoundedDiscount(totals.Discount),
-		ShowSummary:      options.ShowSummary,
-		Summary:          options.Summary,
+		PageTitle:         options.PageTitle,
+		Action:            options.Action,
+		SubmitLabel:       options.SubmitLabel,
+		ActiveSection:     options.ActiveSection,
+		Flash:             options.Flash,
+		ValidationToast:   options.ValidationToast,
+		ShowPublishToggle: options.ShowPublishToggle,
+		PublishAction:     options.PublishAction,
+		PublishLabel:      options.PublishLabel,
+		PublishRecency:    options.PublishRecency,
+		Input:             options.Input,
+		SupplierOptions:   options.SupplierOptions,
+		CategoryOptions:   bookCategoryOptions,
+		ConditionOptions:  bookConditionOptions,
+		CandidateBooks:    options.CandidateBooks,
+		SelectedBooks:     options.SelectedBooks,
+		Errors:            options.Errors,
+		BundleMRPText:     formatDecimal(totals.BundleMRP),
+		SumMyPriceText:    formatDecimal(totals.SumMyPrice),
+		SumMyBundleText:   formatDecimal(totals.SumMyBundlePrice),
+		DiscountText:      formatRoundedDiscount(totals.Discount),
+		ShowSummary:       options.ShowSummary,
+		Summary:           options.Summary,
 	}
 }
 
@@ -649,10 +754,13 @@ func (s *Server) renderBundleForm(w http.ResponseWriter, data bundleFormViewMode
 }
 
 var bundlesListTemplate = template.Must(template.New("bundles-list").Funcs(template.FuncMap{
-	"adminNav":       adminNav,
-	"bundleLabel":    bundleLabel,
-	"money":          func(v float64) string { return fmt.Sprintf("%.2f", v) },
-	"joinConditions": func(values []string) string { return strings.Join(values, ", ") },
+	"adminNav":         adminNav,
+	"bundleLabel":      bundleLabel,
+	"money":            func(v float64) string { return fmt.Sprintf("%.2f", v) },
+	"joinConditions":   func(values []string) string { return strings.Join(values, ", ") },
+	"publishRecency":   publishRecencyLabel,
+	"publishState":     publishStateLabel,
+	"toggleActionPath": toggleActionPath,
 }).Parse(`<!doctype html>
 <html lang="en">
 <head>
@@ -674,6 +782,12 @@ var bundlesListTemplate = template.Must(template.New("bundles-list").Funcs(templ
     th, td { padding:10px; text-align:left; border-bottom:1px solid var(--line); vertical-align:middle; }
     th { font-size:0.9rem; color:var(--muted); }
     .flash { margin:12px 0; padding:10px 12px; border-radius:8px; background:#d1fae5; color:#065f46; border:1px solid #6ee7b7; }
+    .toast-error { position:fixed; top:16px; right:16px; max-width:min(420px, 90vw); z-index:999; margin:0; padding:10px 12px; border-radius:10px; background:#fee2e2; color:#991b1b; border:1px solid #fecaca; box-shadow:0 8px 24px rgba(0,0,0,0.12); }
+    .inline-publish { display:flex; gap:8px; align-items:center; }
+    .toggle { padding:5px 9px; border-radius:999px; border:1px solid var(--line); cursor:pointer; font-weight:600; font-size:0.8rem; }
+    .toggle.on { background:#dcfce7; color:#166534; border-color:#86efac; }
+    .toggle.off { background:#f3f4f6; color:#374151; border-color:#d1d5db; }
+    .recency { color:var(--muted); font-size:0.8rem; }
     .row-link { color: var(--accent); font-weight: 600; }
   </style>
 </head>
@@ -687,6 +801,7 @@ var bundlesListTemplate = template.Must(template.New("bundles-list").Funcs(templ
       <a class="button" href="/admin/bundles/new">Add Bundle</a>
     </div>
     {{if .Flash}}<p class="flash">{{.Flash}}</p>{{end}}
+    {{if .ValidationToast}}<p class="toast-error" role="alert">{{.ValidationToast}}</p>{{end}}
     <table>
       <thead>
         <tr>
@@ -696,6 +811,7 @@ var bundlesListTemplate = template.Must(template.New("bundles-list").Funcs(templ
           <th>Allowed condition(s)</th>
           <th># of books</th>
           <th>Bundle price</th>
+          <th>Publish</th>
           <th>Action</th>
         </tr>
       </thead>
@@ -709,11 +825,17 @@ var bundlesListTemplate = template.Must(template.New("bundles-list").Funcs(templ
           <td>{{joinConditions .AllowedConditions}}</td>
           <td>{{.BookCount}}</td>
           <td>{{money .BundlePrice}}</td>
+          <td>
+            <form class="inline-publish" method="post" action="/admin/bundles/{{.ID}}/{{toggleActionPath .IsPublished}}">
+              <button class="toggle {{if .IsPublished}}on{{else}}off{{end}}" type="submit">{{publishState .IsPublished}}</button>
+              <span class="recency">{{publishRecency .IsPublished .PublishedAt .UnpublishedAt}}</span>
+            </form>
+          </td>
           <td><a class="row-link" href="/admin/bundles/{{.ID}}">View/Edit</a></td>
         </tr>
         {{end}}
       {{else}}
-        <tr><td colspan="7">No bundles yet. Click "Add Bundle" to create one.</td></tr>
+        <tr><td colspan="8">No bundles yet. Click "Add Bundle" to create one.</td></tr>
       {{end}}
       </tbody>
     </table>
@@ -760,6 +882,11 @@ var bundleFormTemplate = template.Must(template.New("bundle-form").Funcs(templat
     .row { display:flex; gap:10px; align-items:center; }
     .secondary { color:var(--accent); text-decoration:none; font-weight:600; }
     .flash { margin:12px 0; padding:10px 12px; border-radius:8px; background:#d1fae5; color:#065f46; border:1px solid #6ee7b7; }
+    .publish-box { margin:0 0 14px; padding:12px; background:#f8fafc; border:1px solid var(--line); border-radius:8px; display:flex; gap:10px; align-items:center; }
+    .toggle { padding:6px 10px; border-radius:999px; border:1px solid var(--line); cursor:pointer; font-weight:600; font-size:0.85rem; background:white; }
+    .toggle.on { background:#dcfce7; color:#166534; border-color:#86efac; }
+    .toggle.off { background:#f3f4f6; color:#374151; border-color:#d1d5db; }
+    .recency { color:var(--muted); font-size:0.85rem; }
     .summary { margin:0 0 14px; padding:12px; background:#eef6f4; border:1px solid #d5ebe6; border-radius:8px; color:#0f3b36; }
     .step { margin-bottom:18px; }
     .step h2 { margin:0 0 8px; font-size:1.05rem; }
@@ -789,6 +916,14 @@ var bundleFormTemplate = template.Must(template.New("bundle-form").Funcs(templat
     <h1>{{.PageTitle}}</h1>
     {{if .Flash}}<p class="flash">{{.Flash}}</p>{{end}}
     {{if .ValidationToast}}<p class="toast-error" role="alert">{{.ValidationToast}}</p>{{end}}
+    {{if .ShowPublishToggle}}
+    <div class="publish-box">
+      <form method="post" action="{{.PublishAction}}">
+        <button class="toggle {{if eq .PublishLabel "Published"}}on{{else}}off{{end}}" type="submit">{{.PublishLabel}}</button>
+      </form>
+      <span class="recency">{{.PublishRecency}}</span>
+    </div>
+    {{end}}
     {{if .ShowSummary}}
     <div class="summary"><strong>{{.Summary.Label}}</strong><br>Supplier: {{.Summary.SupplierName}} | Category: {{.Summary.Category}} | # of books: {{.Summary.BookCount}} | Bundle price: {{.Summary.BundlePrice}}</div>
     {{end}}

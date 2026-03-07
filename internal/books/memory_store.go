@@ -1,6 +1,9 @@
 package books
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 type memoryRow struct {
 	book  Book
@@ -25,13 +28,16 @@ func (s *MemoryStore) List() ([]ListItem, error) {
 	items := make([]ListItem, 0, len(s.rows))
 	for _, row := range s.rows {
 		items = append(items, ListItem{
-			ID:       row.book.ID,
-			Title:    row.book.Title,
-			Author:   row.book.Author,
-			Category: row.book.Category,
-			MyPrice:  row.book.MyPrice,
-			InStock:  row.book.InStock,
-			HasCover: len(row.cover.Data) > 0,
+			ID:            row.book.ID,
+			Title:         row.book.Title,
+			Author:        row.book.Author,
+			Category:      row.book.Category,
+			MyPrice:       row.book.MyPrice,
+			InStock:       row.book.InStock,
+			HasCover:      len(row.cover.Data) > 0,
+			IsPublished:   row.book.IsPublished,
+			PublishedAt:   cloneTimePointer(row.book.PublishedAt),
+			UnpublishedAt: cloneTimePointer(row.book.UnpublishedAt),
 		})
 	}
 	return items, nil
@@ -41,6 +47,7 @@ func (s *MemoryStore) Create(input CreateInput) (Book, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	now := time.Now().UTC()
 	book := Book{
 		ID:            s.nextID,
 		Title:         input.Title,
@@ -55,6 +62,9 @@ func (s *MemoryStore) Create(input CreateInput) (Book, error) {
 		Author:        input.Author,
 		Notes:         input.Notes,
 		InStock:       true,
+		IsPublished:   false,
+		PublishedAt:   nil,
+		UnpublishedAt: &now,
 	}
 
 	s.nextID++
@@ -130,6 +140,41 @@ func (s *MemoryStore) SetInStock(id int, inStock bool) (Book, error) {
 	return cloneBook(row.book), nil
 }
 
+func (s *MemoryStore) Publish(id int) (Book, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	idx := s.indexByID(id)
+	if idx < 0 {
+		return Book{}, ErrNotFound
+	}
+	row := s.rows[idx]
+	if !row.book.InStock {
+		return Book{}, ErrCannotPublishOutOfStock
+	}
+	now := time.Now().UTC()
+	row.book.IsPublished = true
+	row.book.PublishedAt = &now
+	s.rows[idx] = row
+	return cloneBook(row.book), nil
+}
+
+func (s *MemoryStore) Unpublish(id int) (Book, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	idx := s.indexByID(id)
+	if idx < 0 {
+		return Book{}, ErrNotFound
+	}
+	row := s.rows[idx]
+	now := time.Now().UTC()
+	row.book.IsPublished = false
+	row.book.UnpublishedAt = &now
+	s.rows[idx] = row
+	return cloneBook(row.book), nil
+}
+
 func (s *MemoryStore) indexByID(id int) int {
 	for i, row := range s.rows {
 		if row.book.ID == id {
@@ -141,6 +186,8 @@ func (s *MemoryStore) indexByID(id int) int {
 
 func cloneBook(book Book) Book {
 	book.BundlePrice = cloneFloatPointer(book.BundlePrice)
+	book.PublishedAt = cloneTimePointer(book.PublishedAt)
+	book.UnpublishedAt = cloneTimePointer(book.UnpublishedAt)
 	return book
 }
 
@@ -156,4 +203,12 @@ func cloneCover(cover Cover) Cover {
 	data := make([]byte, len(cover.Data))
 	copy(data, cover.Data)
 	return Cover{Data: data, MimeType: cover.MimeType}
+}
+
+func cloneTimePointer(v *time.Time) *time.Time {
+	if v == nil {
+		return nil
+	}
+	cloned := *v
+	return &cloned
 }
