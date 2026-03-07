@@ -754,6 +754,7 @@ var bundleFormTemplate = template.Must(template.New("bundle-form").Funcs(templat
     .conditions label { display:flex; align-items:center; gap:6px; font-weight:500; }
     .conditions input[type=checkbox] { width:auto; }
     .picker-grid { display:grid; grid-template-columns: 1fr 1fr; gap:14px; }
+    .eligible-scroll { max-height:420px; overflow-y:auto; }
     table { width:100%; border-collapse:collapse; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
     th, td { border-bottom:1px solid var(--line); padding:8px; text-align:left; vertical-align:middle; }
     th { background:#f8fafc; color:var(--muted); font-size:0.85rem; }
@@ -825,32 +826,34 @@ var bundleFormTemplate = template.Must(template.New("bundle-form").Funcs(templat
         <div class="picker-grid">
           <div>
             <h3>Eligible books</h3>
-            <table>
-              <thead>
-                <tr><th>Title</th><th>Author</th><th>Condition</th><th>MRP</th><th>My price</th><th></th></tr>
-              </thead>
-              <tbody id="bundle-picker-body">
-              {{range .CandidateBooks}}
-                <tr data-picker-book-row
-                    data-book-id="{{.BookID}}"
-                    data-title="{{.Title}}"
-                    data-author="{{.Author}}"
-                    data-supplier-id="{{.SupplierID}}"
-                    data-category="{{.Category}}"
-                    data-condition="{{.Condition}}"
-                    data-mrp="{{money .MRP}}"
-                    data-my-price="{{money .MyPrice}}"
-                    data-bundle-effective="{{if .BundlePrice}}{{money .BundlePrice}}{{else}}{{money .MyPrice}}{{end}}">
-                  <td>{{.Title}}</td>
-                  <td>{{.Author}}</td>
-                  <td>{{.Condition}}</td>
-                  <td>{{money .MRP}}</td>
-                  <td>{{money .MyPrice}}</td>
-                  <td><button class="tiny-btn" type="button" data-add-book="{{.BookID}}">Add</button></td>
-                </tr>
-              {{end}}
-              </tbody>
-            </table>
+            <div class="eligible-scroll">
+              <table>
+                <thead>
+                  <tr><th>Title</th><th>Author</th><th>Condition</th><th>MRP</th><th>My price</th><th></th></tr>
+                </thead>
+                <tbody id="bundle-picker-body">
+                {{range .CandidateBooks}}
+                  <tr data-picker-book-row
+                      data-book-id="{{.BookID}}"
+                      data-title="{{.Title}}"
+                      data-author="{{.Author}}"
+                      data-supplier-id="{{.SupplierID}}"
+                      data-category="{{.Category}}"
+                      data-condition="{{.Condition}}"
+                      data-mrp="{{money .MRP}}"
+                      data-my-price="{{money .MyPrice}}"
+                      data-bundle-effective="{{if .BundlePrice}}{{money .BundlePrice}}{{else}}{{money .MyPrice}}{{end}}">
+                    <td>{{.Title}}</td>
+                    <td>{{.Author}}</td>
+                    <td>{{.Condition}}</td>
+                    <td>{{money .MRP}}</td>
+                    <td>{{money .MyPrice}}</td>
+                    <td><button class="tiny-btn" type="button" data-add-book="{{.BookID}}">Add</button></td>
+                  </tr>
+                {{end}}
+                </tbody>
+              </table>
+            </div>
           </div>
           <div>
             <h3>Selected books</h3>

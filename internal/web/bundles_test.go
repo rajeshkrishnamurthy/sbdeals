@@ -161,6 +161,24 @@ func TestBundleNewIncludesEnhancementScript(t *testing.T) {
 	}
 }
 
+func TestBundleNewUsesInternalScrollForEligibleBooks(t *testing.T) {
+	s := newBundleTestServer(t)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/admin/bundles/new", nil)
+	s.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `class="eligible-scroll"`) {
+		t.Fatalf("expected eligible books internal scroll container")
+	}
+	if !strings.Contains(body, `.eligible-scroll { max-height:420px; overflow-y:auto;`) {
+		t.Fatalf("expected fixed-height scroll styling for eligible books")
+	}
+}
+
 func newBundleTestServer(t *testing.T) *Server {
 	t.Helper()
 	supplierStore, bundleStore := newBundleStores(t)
