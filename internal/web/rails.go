@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -895,7 +896,8 @@ func railItemMatchesFilters(item railItemOption, filters railPickerFilterCriteri
 	if filters.PriceMin != nil && filters.PriceMax != nil && (item.Price < *filters.PriceMin || item.Price > *filters.PriceMax) {
 		return false
 	}
-	if filters.DiscountMin != nil && filters.DiscountMax != nil && (item.DiscountPct < *filters.DiscountMin || item.DiscountPct > *filters.DiscountMax) {
+	roundedDiscount := math.Round(item.DiscountPct)
+	if filters.DiscountMin != nil && filters.DiscountMax != nil && (roundedDiscount < *filters.DiscountMin || roundedDiscount > *filters.DiscountMax) {
 		return false
 	}
 	return true
@@ -1194,9 +1196,9 @@ var railFormTemplate = template.Must(template.New("rail-form").Funcs(template.Fu
     </form>
 
     {{if .ShowItemPanel}}
-    <section class="card">
+    <section class="card" id="rail-picker">
       <h2>Item Assignment</h2>
-      <form method="get" action="/admin/rails/{{.RailID}}">
+      <form method="get" action="/admin/rails/{{.RailID}}#rail-picker">
         <div class="filter-grid">
           <div class="field">
             <label for="rail-item-search">Title Search</label>
@@ -1233,7 +1235,7 @@ var railFormTemplate = template.Must(template.New("rail-form").Funcs(template.Fu
         </div>
         <div class="row">
           <button class="button" type="submit">Apply Filters</button>
-          <a class="secondary" href="/admin/rails/{{.RailID}}">Reset Filters</a>
+          <a class="secondary" href="/admin/rails/{{.RailID}}#rail-picker">Reset Filters</a>
         </div>
       </form>
       <div class="picker-grid">

@@ -391,6 +391,9 @@ func TestRailItemPickerRendersCommonColumnsAndHoverPreview(t *testing.T) {
 			t.Fatalf("expected body to contain %q", check)
 		}
 	}
+	if !strings.Contains(body, `action="/admin/rails/`+strconv.Itoa(rail.ID)+`#rail-picker"`) {
+		t.Fatalf("expected apply filters form to keep user anchored to picker area")
+	}
 }
 
 func TestRailsFormAssetServesScript(t *testing.T) {
@@ -404,6 +407,25 @@ func TestRailsFormAssetServesScript(t *testing.T) {
 	}
 	if strings.TrimSpace(rr.Body.String()) == "" {
 		t.Fatalf("expected rails-form.js content")
+	}
+}
+
+func TestRailPickerDiscountMinUsesRoundedPercent(t *testing.T) {
+	min := 60.0
+	max := 60.0
+	criteria := railPickerFilterCriteria{
+		DiscountMin: &min,
+		DiscountMax: &max,
+	}
+
+	shouldMatch := railItemOption{DiscountPct: 59.6}
+	if !railItemMatchesFilters(shouldMatch, criteria, rails.RailTypeBundle) {
+		t.Fatalf("expected rounded 59.6%% discount to match 60-60 range")
+	}
+
+	shouldNotMatch := railItemOption{DiscountPct: 59.4}
+	if railItemMatchesFilters(shouldNotMatch, criteria, rails.RailTypeBundle) {
+		t.Fatalf("expected rounded 59.4%% discount to not match 60-60 range")
 	}
 }
 
