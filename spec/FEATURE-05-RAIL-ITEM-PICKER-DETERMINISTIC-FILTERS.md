@@ -38,22 +38,18 @@ Validation:
   - Fixed-height container
   - Internal scroll
 
-### 6) Result row display by item type
-Display fields should be context-aware:
-
-#### Bundle rows
-Show:
-- Thumbnail image
+### 6) Result row display (common columns)
+Use neutral/common headers across item types:
+- Image
 - Title
 - Category
-- Bundle price
-- Discount %
+- Price
+- Discount
 
-#### Book rows
-Show:
-- Thumbnail image (book cover)
-- Title
-- Category
+Display rules:
+- For bundles: Price = bundle price, Discount = bundle discount %.
+- For books: Price = book price, Discount = book discount %.
+- Category comes from the existing taxonomy source.
 
 Image interaction:
 - On mouse hover over thumbnail, show a simple enlarged preview (applies to both books and bundles).
@@ -94,9 +90,7 @@ Image interaction:
 3. Apply Filters is explicit (no live filtering).
 4. Reset Filters resets filter state and results.
 5. Invalid range (`min > max`) blocks apply and shows inline error.
-6. Result rows are context-aware:
-   - Bundle rows display thumbnail, title, category, price, discount.
-   - Book rows display thumbnail, title, category.
+6. Result rows use neutral/common columns: Image, Title, Category, Price, Discount (for both books and bundles).
 7. Thumbnail hover shows enlarged preview.
 8. Already-added rail items do not appear in results.
 9. Result panel uses fixed-height internal-scroll pattern consistent with bundle-book selector.
@@ -111,7 +105,7 @@ Image interaction:
 - Discount `min > max` shows error and blocks apply.
 - Reset clears all fields and resets list.
 - Already-selected rail item is absent in picker.
-- In bundle context, row shows thumb/title/category/price/discount.
-- In book context, row shows thumb/title/category (no bundle price/discount columns).
+- In bundle context, row maps to common columns (Image/Title/Category/Price/Discount) using bundle values.
+- In book context, row maps to common columns (Image/Title/Category/Price/Discount) using book values.
 - Hover preview appears/disappears correctly.
 - Admin Note persists across create/edit and enforces max length.
