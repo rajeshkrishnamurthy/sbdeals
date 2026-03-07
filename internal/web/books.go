@@ -16,9 +16,21 @@ import (
 )
 
 var (
-	bookCategoryOptions  = []string{"Children", "Young Adults", "Fiction", "Non-Fiction"}
-	bookFormatOptions    = []string{"Paperback", "Hardcover"}
-	bookConditionOptions = []string{"Good as new", "Very good", "Gently used", "Used"}
+	bookCategoryOptions      = []string{"Children", "Young Adults", "Fiction", "Non-Fiction"}
+	bookFormatOptions        = []string{"Paperback", "Hardcover"}
+	bookConditionOptions     = []string{"Good as new", "Very good", "Gently used", "Used"}
+	bookValidationFieldOrder = []string{
+		"cover",
+		"title",
+		"supplier_id",
+		"category",
+		"format",
+		"condition",
+		"mrp",
+		"my_price",
+		"bundle_price",
+		"in_stock",
+	}
 )
 
 func (s *Server) handleBooksCollection(w http.ResponseWriter, r *http.Request) {
@@ -106,7 +118,12 @@ func (s *Server) renderBooksList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := booksListViewModel{Flash: r.URL.Query().Get("flash"), ActiveSection: "books", Books: items}
+	data := booksListViewModel{
+		Flash:           r.URL.Query().Get("flash"),
+		ValidationToast: strings.TrimSpace(r.URL.Query().Get("error")),
+		ActiveSection:   "books",
+		Books:           items,
+	}
 	if err := booksListTemplate.Execute(w, data); err != nil {
 		http.Error(w, "failed to render books list", http.StatusInternalServerError)
 	}
@@ -142,6 +159,7 @@ func (s *Server) createBook(w http.ResponseWriter, r *http.Request) {
 			Input:             inputRaw,
 			SupplierOptions:   suppliersList,
 			Errors:            fieldErrors,
+			ValidationToast:   buildValidationToast(fieldErrors, bookValidationFieldOrder),
 			ShowInStockEditor: false,
 			HasExistingCover:  false,
 			Summary:           nil,
@@ -270,6 +288,7 @@ func (s *Server) updateBook(w http.ResponseWriter, r *http.Request, bookID int) 
 			Input:             inputRaw,
 			SupplierOptions:   suppliersList,
 			Errors:            fieldErrors,
+			ValidationToast:   buildValidationToast(fieldErrors, bookValidationFieldOrder),
 			ShowInStockEditor: true,
 			HasExistingCover:  true,
 			BookID:            bookID,
@@ -311,13 +330,13 @@ func (s *Server) updateBook(w http.ResponseWriter, r *http.Request, bookID int) 
 
 func (s *Server) updateBookInStockInline(w http.ResponseWriter, r *http.Request, bookID int) {
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
+		http.Redirect(w, r, "/admin/books?error="+url.QueryEscape("Please submit a valid in-stock value."), http.StatusSeeOther)
 		return
 	}
 
 	inStock, ok := parseStockValue(strings.TrimSpace(r.Form.Get("in_stock")))
 	if !ok {
-		http.Error(w, "invalid in-stock value", http.StatusBadRequest)
+		http.Redirect(w, r, "/admin/books?error="+url.QueryEscape("Please choose a valid in-stock value."), http.StatusSeeOther)
 		return
 	}
 
@@ -588,9 +607,10 @@ func supplierNameByID(id int, suppliersList []suppliers.Supplier) string {
 }
 
 type booksListViewModel struct {
-	Flash         string
-	ActiveSection string
-	Books         []books.ListItem
+	Flash           string
+	ValidationToast string
+	ActiveSection   string
+	Books           []books.ListItem
 }
 
 type bookSummaryViewModel struct {
@@ -621,6 +641,7 @@ type bookFormViewModel struct {
 	SubmitLabel       string
 	ActiveSection     string
 	Flash             string
+	ValidationToast   string
 	Input             bookFormInput
 	SupplierOptions   []suppliers.Supplier
 	CategoryOptions   []string
@@ -649,6 +670,7 @@ type bookFormViewOptions struct {
 	SubmitLabel       string
 	ActiveSection     string
 	Flash             string
+	ValidationToast   string
 	Input             bookFormInput
 	SupplierOptions   []suppliers.Supplier
 	Errors            map[string]string
@@ -672,6 +694,7 @@ func buildBookFormView(options bookFormViewOptions) bookFormViewModel {
 		SubmitLabel:       options.SubmitLabel,
 		ActiveSection:     options.ActiveSection,
 		Flash:             options.Flash,
+		ValidationToast:   options.ValidationToast,
 		Input:             options.Input,
 		SupplierOptions:   options.SupplierOptions,
 		CategoryOptions:   bookCategoryOptions,
@@ -728,6 +751,7 @@ var booksListTemplate = template.Must(template.New("books-list").Funcs(template.
     .inline-stock select { padding:5px 6px; border:1px solid var(--line); border-radius:6px; background:white; }
     .inline-stock button { padding:5px 8px; border:1px solid var(--line); border-radius:6px; background:white; cursor:pointer; }
     .price { font-variant-numeric: tabular-nums; }
+    .toast-error { position:fixed; top:16px; right:16px; max-width:min(420px, 90vw); z-index:999; margin:0; padding:10px 12px; border-radius:10px; background:#fee2e2; color:#991b1b; border:1px solid #fecaca; box-shadow:0 8px 24px rgba(0,0,0,0.12); }
   </style>
 </head>
 <body>
@@ -742,6 +766,7 @@ var booksListTemplate = template.Must(template.New("books-list").Funcs(template.
       <a class="button" href="/admin/books/new">Add Book</a>
     </div>
     {{if .Flash}}<p class="flash">{{.Flash}}</p>{{end}}
+    {{if .ValidationToast}}<p class="toast-error" role="alert">{{.ValidationToast}}</p>{{end}}
     <table>
       <thead>
         <tr>
@@ -826,6 +851,7 @@ var booksFormTemplate = template.Must(template.New("books-form").Funcs(template.
     .thumb-image { width:32px; height:48px; object-fit:contain; object-position:center; display:block; }
     .thumb-placeholder { font-size:9px; color:#6b7280; text-align:center; line-height:1.1; }
     .hidden { display:none; }
+    .toast-error { position:fixed; top:16px; right:16px; max-width:min(420px, 90vw); z-index:999; margin:0; padding:10px 12px; border-radius:10px; background:#fee2e2; color:#991b1b; border:1px solid #fecaca; box-shadow:0 8px 24px rgba(0,0,0,0.12); }
   </style>
 </head>
 <body>
@@ -837,6 +863,7 @@ var booksFormTemplate = template.Must(template.New("books-form").Funcs(template.
   <main class="shell">
     <h1>{{.PageTitle}}</h1>
     {{if .Flash}}<p class="flash">{{.Flash}}</p>{{end}}
+    {{if .ValidationToast}}<p class="toast-error" role="alert">{{.ValidationToast}}</p>{{end}}
 
     {{if .Summary}}
     <div class="summary">

@@ -90,6 +90,12 @@ func TestCreateSupplierMissingLocationReturnsValidationError(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), "Location is required") {
 		t.Fatalf("expected location validation error in response body")
 	}
+	if !strings.Contains(rr.Body.String(), `class="toast-error"`) {
+		t.Fatalf("expected toast error for validation failure")
+	}
+	if !strings.Contains(rr.Body.String(), "Please fix: Location is required.") {
+		t.Fatalf("expected toast summary text for validation failure")
+	}
 }
 
 func TestSupplierDetailAndUpdateFlow(t *testing.T) {

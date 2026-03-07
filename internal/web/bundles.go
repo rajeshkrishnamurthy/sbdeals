@@ -14,6 +14,14 @@ import (
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/suppliers"
 )
 
+var bundleValidationFieldOrder = []string{
+	"supplier_id",
+	"category",
+	"allowed_conditions",
+	"book_ids",
+	"bundle_price",
+}
+
 func (s *Server) handleBundlesCollection(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -116,6 +124,7 @@ func (s *Server) createBundle(w http.ResponseWriter, r *http.Request) {
 			CandidateBooks:  pickerBooks,
 			SelectedBooks:   selectedBooks,
 			Errors:          fieldErrors,
+			ValidationToast: buildValidationToast(fieldErrors, bundleValidationFieldOrder),
 			ShowSummary:     false,
 		}))
 		return
@@ -231,6 +240,7 @@ func (s *Server) updateBundle(w http.ResponseWriter, r *http.Request, bundleID i
 			CandidateBooks:  pickerBooks,
 			SelectedBooks:   selectedBooks,
 			Errors:          fieldErrors,
+			ValidationToast: buildValidationToast(fieldErrors, bundleValidationFieldOrder),
 			ShowSummary:     true,
 			Summary:         summary,
 		}))
@@ -552,6 +562,7 @@ type bundleFormViewModel struct {
 	SubmitLabel      string
 	ActiveSection    string
 	Flash            string
+	ValidationToast  string
 	Input            bundleFormInput
 	SupplierOptions  []suppliers.Supplier
 	CategoryOptions  []string
@@ -591,6 +602,7 @@ type bundleFormViewOptions struct {
 	SubmitLabel     string
 	ActiveSection   string
 	Flash           string
+	ValidationToast string
 	Input           bundleFormInput
 	SupplierOptions []suppliers.Supplier
 	CandidateBooks  []bundles.PickerBook
@@ -613,6 +625,7 @@ func buildBundleFormView(options bundleFormViewOptions) bundleFormViewModel {
 		SubmitLabel:      options.SubmitLabel,
 		ActiveSection:    options.ActiveSection,
 		Flash:            options.Flash,
+		ValidationToast:  options.ValidationToast,
 		Input:            options.Input,
 		SupplierOptions:  options.SupplierOptions,
 		CategoryOptions:  bookCategoryOptions,
@@ -764,6 +777,7 @@ var bundleFormTemplate = template.Must(template.New("bundle-form").Funcs(templat
     .total-label { color:var(--muted); font-size:0.85rem; }
     .total-value { font-weight:700; }
     .hidden { display:none; }
+    .toast-error { position:fixed; top:16px; right:16px; max-width:min(420px, 90vw); z-index:999; margin:0; padding:10px 12px; border-radius:10px; background:#fee2e2; color:#991b1b; border:1px solid #fecaca; box-shadow:0 8px 24px rgba(0,0,0,0.12); }
     @media (max-width: 960px) { .picker-grid { grid-template-columns: 1fr; } .totals { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -774,6 +788,7 @@ var bundleFormTemplate = template.Must(template.New("bundle-form").Funcs(templat
   <main class="shell">
     <h1>{{.PageTitle}}</h1>
     {{if .Flash}}<p class="flash">{{.Flash}}</p>{{end}}
+    {{if .ValidationToast}}<p class="toast-error" role="alert">{{.ValidationToast}}</p>{{end}}
     {{if .ShowSummary}}
     <div class="summary"><strong>{{.Summary.Label}}</strong><br>Supplier: {{.Summary.SupplierName}} | Category: {{.Summary.Category}} | # of books: {{.Summary.BookCount}} | Bundle price: {{.Summary.BundlePrice}}</div>
     {{end}}

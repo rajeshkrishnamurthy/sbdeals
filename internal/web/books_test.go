@@ -153,6 +153,63 @@ func TestCreateBookRequiresCover(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), "Cover image is required") {
 		t.Fatalf("expected cover validation error")
 	}
+	if !strings.Contains(rr.Body.String(), `class="toast-error"`) {
+		t.Fatalf("expected toast error for validation failure")
+	}
+	if !strings.Contains(rr.Body.String(), "Please fix: Cover image is required.") {
+		t.Fatalf("expected toast summary text for validation failure")
+	}
+}
+
+func TestInlineStockInvalidValueRedirectsWithToastError(t *testing.T) {
+	supplierStore := suppliers.NewMemoryStore()
+	_, err := supplierStore.Create(suppliers.Input{Name: "A1", WhatsApp: "+91-9", Location: "Bengaluru"})
+	if err != nil {
+		t.Fatalf("create supplier: %v", err)
+	}
+	bookStore := books.NewMemoryStore()
+	_, err = bookStore.Create(books.CreateInput{
+		Title:      "Book",
+		Cover:      books.Cover{Data: []byte("img"), MimeType: "image/png"},
+		SupplierID: 1,
+		Category:   "Fiction",
+		Format:     "Paperback",
+		Condition:  "Very good",
+		MRP:        100,
+		MyPrice:    90,
+	})
+	if err != nil {
+		t.Fatalf("create book: %v", err)
+	}
+
+	s := NewServer(supplierStore, bookStore)
+	form := url.Values{}
+	form.Set("in_stock", "maybe")
+	req := httptest.NewRequest(http.MethodPost, "/admin/books/1/stock", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", rr.Code)
+	}
+	if rr.Header().Get("Location") != "/admin/books?error=Please+choose+a+valid+in-stock+value." {
+		t.Fatalf("unexpected redirect: %s", rr.Header().Get("Location"))
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, rr.Header().Get("Location"), nil)
+	listRR := httptest.NewRecorder()
+	s.Handler().ServeHTTP(listRR, listReq)
+	if listRR.Code != http.StatusOK {
+		t.Fatalf("expected list 200, got %d", listRR.Code)
+	}
+	body := listRR.Body.String()
+	if !strings.Contains(body, `class="toast-error"`) {
+		t.Fatalf("expected toast error on books list")
+	}
+	if !strings.Contains(body, "Please choose a valid in-stock value.") {
+		t.Fatalf("expected validation message in toast")
+	}
 }
 
 func TestBookEditAndInlineStockToggle(t *testing.T) {

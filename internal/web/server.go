@@ -190,6 +190,11 @@ func (s *Server) createSupplier(w http.ResponseWriter, r *http.Request) {
 			Input:         input,
 			Locations:     s.locations,
 			Errors:        errorsByField,
+			ValidationToast: buildValidationToast(errorsByField, []string{
+				"name",
+				"whatsapp",
+				"location",
+			}),
 		})
 		return
 	}
@@ -227,6 +232,11 @@ func (s *Server) updateSupplier(w http.ResponseWriter, r *http.Request, supplier
 			Input:         input,
 			Locations:     s.locations,
 			Errors:        errorsByField,
+			ValidationToast: buildValidationToast(errorsByField, []string{
+				"name",
+				"whatsapp",
+				"location",
+			}),
 		})
 		return
 	}
@@ -305,14 +315,15 @@ type supplierListViewModel struct {
 }
 
 type supplierFormViewModel struct {
-	PageTitle     string
-	Action        string
-	SubmitLabel   string
-	Flash         string
-	ActiveSection string
-	Input         suppliers.Input
-	Locations     []string
-	Errors        map[string]string
+	PageTitle       string
+	Action          string
+	SubmitLabel     string
+	Flash           string
+	ValidationToast string
+	ActiveSection   string
+	Input           suppliers.Input
+	Locations       []string
+	Errors          map[string]string
 }
 
 func (m supplierFormViewModel) HasError(field string) bool {
@@ -417,6 +428,7 @@ var supplierFormTemplate = template.Must(template.New("supplier-form").Funcs(tem
     .row { display:flex; gap:10px; align-items:center; }
     .secondary { color:var(--accent); text-decoration:none; font-weight:600; }
     .flash { margin: 12px 0; padding: 10px 12px; border-radius:8px; background:#d1fae5; color:#065f46; border:1px solid #6ee7b7; }
+    .toast-error { position:fixed; top:16px; right:16px; max-width:min(420px, 90vw); z-index:999; margin:0; padding:10px 12px; border-radius:10px; background:#fee2e2; color:#991b1b; border:1px solid #fecaca; box-shadow:0 8px 24px rgba(0,0,0,0.12); }
   </style>
 </head>
 <body>
@@ -428,6 +440,7 @@ var supplierFormTemplate = template.Must(template.New("supplier-form").Funcs(tem
   <main class="shell">
     <h1>{{.PageTitle}}</h1>
     {{if .Flash}}<p class="flash">{{.Flash}}</p>{{end}}
+    {{if .ValidationToast}}<p class="toast-error" role="alert">{{.ValidationToast}}</p>{{end}}
     <form class="card" method="post" action="{{.Action}}">
       <div class="field">
         <label for="name">Supplier Name</label>

@@ -92,6 +92,12 @@ func TestCreateBundleRequiresAtLeastTwoBooks(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), "Bundle must include at least 2 books") {
 		t.Fatalf("expected min books validation error")
 	}
+	if !strings.Contains(rr.Body.String(), `class="toast-error"`) {
+		t.Fatalf("expected toast error for validation failure")
+	}
+	if !strings.Contains(rr.Body.String(), "Please fix: Bundle must include at least 2 books.") {
+		t.Fatalf("expected toast summary text for validation failure")
+	}
 }
 
 func TestEditBundleRevalidatesWhenSupplierChanges(t *testing.T) {
