@@ -925,6 +925,17 @@ func railTypeLabel(t rails.RailType) string {
 	}
 }
 
+func railAssignmentHeading(rawType string) string {
+	switch rails.RailType(strings.TrimSpace(rawType)) {
+	case rails.RailTypeBook:
+		return "Add books to rail"
+	case rails.RailTypeBundle:
+		return "Add bundles to rail"
+	default:
+		return "Add items to rail"
+	}
+}
+
 type railsListViewModel struct {
 	Flash           string
 	ValidationToast string
@@ -1090,6 +1101,7 @@ var railsListTemplate = template.Must(template.New("rails-list").Funcs(template.
 var railFormTemplate = template.Must(template.New("rail-form").Funcs(template.FuncMap{
 	"adminNav":      adminNav,
 	"railTypeLabel": railTypeLabel,
+	"railHeading":   railAssignmentHeading,
 	"money":         func(v float64) string { return fmt.Sprintf("%.2f", v) },
 	"discount":      formatRoundedDiscount,
 }).Parse(`<!doctype html>
@@ -1197,7 +1209,7 @@ var railFormTemplate = template.Must(template.New("rail-form").Funcs(template.Fu
 
     {{if .ShowItemPanel}}
     <section class="card" id="rail-picker">
-      <h2>Item Assignment</h2>
+      <h2>{{railHeading .Input.Type}}</h2>
       <form method="get" action="/admin/rails/{{.RailID}}#rail-picker">
         <div class="filter-grid">
           <div class="field">
