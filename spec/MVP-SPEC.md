@@ -23,7 +23,11 @@ Sell used/gently-used books online via a responsive catalog, using WhatsApp as t
 - Only items that are **in stock** are visible in the catalog.
 
 ### 2.2 Item detail
-- Each Book/Bundle has a detail view with photos (if available), title, price, and key metadata.
+- Each Book/Bundle has a detail view with:
+  - cover image (book)
+  - title
+  - price (derived from MRP/discount)
+  - key metadata (condition, format, category)
 
 ### 2.2.1 Supplier-specific listings (important MVP assumption)
 - The public catalog shows supplier-specific listings.
@@ -74,21 +78,26 @@ The canonical lifecycle is:
 - **Collected**
   - Marking Collected is the operational “completed” state.
 
-### 3.3 Inventory rules
-- Each added book listing starts with **inventory = 1**.
-- Items with inventory 0 must not appear in the public catalog.
-- Inventory is reduced (reserved) when an enquiry is converted to **Interested**:
-  - When a **book** becomes Interested, its inventory becomes **0**.
-  - When a **bundle** becomes Interested, inventory of **all books inside the bundle** becomes **0**.
-- Admin flow: **Interested → Cancelled** reinstates inventory back to **1** (manual action by Srikar).
-- If a book becomes out of stock, every bundle containing that book becomes **Invalid**.
-  - Invalid bundles must not appear in the public catalog.
-  - Invalid bundles appear in an **Invalid Bundles** admin section.
+### 3.3 Stock rules (MVP)
+- Use an **In-stock** boolean for book listings and bundles (instead of a numeric stock count).
+
+### Freeze note (for Sprint 1 Books UI)
+- Admin Books list uses a small cover thumbnail with fixed box size and **contain/fit** rendering (aspect ratio preserved; no crop/stretch; row height stays tight).
+- New book listings default to **In-stock = Yes**.
+- Public catalog must show **only In-stock** items.
+- Primary reservation trigger remains: when an enquiry becomes **Interested**:
+  - Book becomes Interested → set **In-stock = No** (reserved/out-of-catalog)
+  - Bundle becomes Interested → set **In-stock = No** for the bundle AND set **In-stock = No** for all books in the bundle
+- Srikar can manually switch a book listing back to **In-stock = Yes** at any stage.
+- When a book’s stock is set to **No**, every bundle containing that book becomes **Invalid/Inactive** (hidden from catalog) and appears in **Invalid Bundles**.
+- When a book is set back to **In-stock = Yes**, bundles containing that book should be re-checked:
+  - if all books in the bundle are In-stock, the bundle becomes active/In-stock again
+  - otherwise it remains invalid/inactive
 
 ### 3.4 Fast ways to add books
 MVP should support at least one fast path:
-- Quick-add form (minimal required fields) with optional enrichment later.
-- Bulk add via simple text/CSV paste is desirable if it’s low effort.
+- Quick-add form with the required book listing fields (including cover image).
+- Bulk add is deferred unless explicitly requested.
 
 ## 4) Bundles
 - Bundles contain **multiple books**.
@@ -115,9 +124,11 @@ Suppliers fulfill orders; each book listing is associated to one supplier.
 - Supplier can mark an order **Shipped**.
 
 ## 6) Pricing
-- A book stores:
-  - price when sold individually
-  - price when sold in a bundle
+- A book listing stores:
+  - **MRP**
+  - **My price** (selling price)
+  - **Discount** is **derived** from MRP and My price (not stored as a manual input)
+  - optional **My price (in bundle)** (input field; not derived)
 - A bundle stores:
   - an explicit bundle price
 

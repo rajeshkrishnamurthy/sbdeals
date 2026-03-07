@@ -1,0 +1,35 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sbd-app
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://sbd:sbd@postgres:5432/sbd?sslmode=disable
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: sbd-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sbd
+      POSTGRES_PASSWORD: sbd
+      POSTGRES_DB: sbd
+    ports:
+      - "5432:5432"
+    volumes:
+      - sbd_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sbd -d sbd"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  sbd_postgres_data:

@@ -1,0 +1,73 @@
+package books
+
+// Book is the full admin view model for a supplier-specific book listing.
+type Book struct {
+	ID            int
+	Title         string
+	SupplierID    int
+	CoverMimeType string
+	Category      string
+	Format        string
+	Condition     string
+	MRP           float64
+	MyPrice       float64
+	BundlePrice   *float64
+	Author        string
+	Notes         string
+	InStock       bool
+}
+
+// Cover contains binary image bytes and associated MIME type.
+type Cover struct {
+	Data     []byte
+	MimeType string
+}
+
+// ListItem is a low-clutter row projection for the admin books list.
+type ListItem struct {
+	ID       int
+	Title    string
+	Author   string
+	Category string
+	MyPrice  float64
+	InStock  bool
+	HasCover bool
+}
+
+// CreateInput captures book fields for create flow.
+type CreateInput struct {
+	Title       string
+	Cover       Cover
+	SupplierID  int
+	Category    string
+	Format      string
+	Condition   string
+	MRP         float64
+	MyPrice     float64
+	BundlePrice *float64
+	Author      string
+	Notes       string
+}
+
+// UpdateInput captures editable book fields for edit flow.
+type UpdateInput struct {
+	Title       string
+	Cover       *Cover
+	SupplierID  int
+	Category    string
+	Format      string
+	Condition   string
+	MRP         float64
+	MyPrice     float64
+	BundlePrice *float64
+	Author      string
+	Notes       string
+	InStock     bool
+}
+
+func ComputeDiscount(mrp, myPrice float64) float64 {
+	if mrp <= 0 {
+		return 0
+	}
+	return ((mrp - myPrice) / mrp) * 100
+}

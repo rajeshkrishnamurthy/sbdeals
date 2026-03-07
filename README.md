@@ -13,5 +13,26 @@ To prevent drift, the MVP requirements live in exactly one place:
 
 If something changes, update **only** `spec/MVP-SPEC.md`.
 
+## Codex operating instructions
+- `CODEX-INSTRUCTIONS.md` — always-on Codex task discipline for this repo
+- `MVP-RULES-REFERENCE.md` — optional reference; do not paste wholesale into every Codex task
+
+## Backlog
+- `BACKLOG.md` — deferred product items / future features (single source of truth for backlog)
+
 ## Project root
 This project lives at `~/.openclaw/projects/sbd/`.
+
+## Run with Docker
+
+Start app + Postgres:
+
+```bash
+docker compose up -d --build
+```
+
+If port `8080` is already in use locally:
+
+```bash
+APP_PORT=8081 docker compose up -d --build
+```

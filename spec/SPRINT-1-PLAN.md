@@ -7,16 +7,14 @@ Deliver a usable public catalog (in-stock only) backed by admin management for s
 1) **Admin: Suppliers (minimal)**
    - Create/edit supplier (name + WhatsApp/phone + notes)
 
-2) **Admin: Book listing create/edit (inventory defaults to 1)**
-   - Minimal required fields (title, supplier, prices)
-   - Optional metadata/photos
-   - MVP rule: inventory is **1 by default** on create
+2) **Admin: Book listing create/edit (In-stock boolean; defaults to Yes)**
+   - Minimal required fields (title, supplier, pricing)
+   - Cover image mandatory (per Feature 02 spec)
+   - MVP rule: **In-stock = Yes** by default on create; admin can toggle Yes/No
 
-3) **Public: Catalog list (in-stock only)**
-   - Show only in-stock books
+3) **Public: Catalog list (in-stock only)** — **DEFERRED** (positioning shift: curated deals approach; customer-facing catalog to a future sprint)
 
-4) **Public: Book detail page**
-   - Clean detail view for a book listing
+4) **Public: Book detail page** — **DEFERRED** (to be tackled alongside curated deals catalog work)
 
 5) **Admin: Bundle create/edit**
    - Enforce single-supplier bundles (only books from the chosen supplier)
