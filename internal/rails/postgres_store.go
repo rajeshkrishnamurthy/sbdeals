@@ -16,7 +16,7 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 }
 
 func (s *PostgresStore) List() ([]ListItem, error) {
-	query := `SELECT r.id, r.title, r.rail_type, r.position, r.is_published, r.published_at, r.unpublished_at, COUNT(ri.item_id) AS item_count FROM rails r LEFT JOIN rail_items ri ON ri.rail_id = r.id GROUP BY r.id, r.title, r.rail_type, r.position, r.is_published, r.published_at, r.unpublished_at ORDER BY r.position ASC, r.id ASC`
+	query := `SELECT r.id, r.title, r.admin_note, r.rail_type, r.position, r.is_published, r.published_at, r.unpublished_at, COUNT(ri.item_id) AS item_count FROM rails r LEFT JOIN rail_items ri ON ri.rail_id = r.id GROUP BY r.id, r.title, r.admin_note, r.rail_type, r.position, r.is_published, r.published_at, r.unpublished_at ORDER BY r.position ASC, r.id ASC`
 	rows, err := s.db.QueryContext(context.Background(), query)
 	if err != nil {
 		return nil, err
@@ -29,7 +29,7 @@ func (s *PostgresStore) List() ([]ListItem, error) {
 		var railType string
 		var publishedAt sql.NullTime
 		var unpublishedAt sql.NullTime
-		if err := rows.Scan(&item.ID, &item.Title, &railType, &item.Position, &item.IsPublished, &publishedAt, &unpublishedAt, &item.ItemCount); err != nil {
+		if err := rows.Scan(&item.ID, &item.Title, &item.AdminNote, &railType, &item.Position, &item.IsPublished, &publishedAt, &unpublishedAt, &item.ItemCount); err != nil {
 			return nil, err
 		}
 		item.Type = RailType(railType)
@@ -55,8 +55,8 @@ func (s *PostgresStore) Create(input CreateInput) (Rail, error) {
 		return Rail{}, ErrDuplicateTitle
 	}
 
-	query := `INSERT INTO rails (title, rail_type, position) VALUES ($1, $2, COALESCE((SELECT MAX(position) + 1 FROM rails), 1)) RETURNING id, title, rail_type, position, is_published, published_at, unpublished_at`
-	row := s.db.QueryRowContext(context.Background(), query, title, string(input.Type))
+	query := `INSERT INTO rails (title, rail_type, admin_note, position) VALUES ($1, $2, $3, COALESCE((SELECT MAX(position) + 1 FROM rails), 1)) RETURNING id, title, rail_type, admin_note, position, is_published, published_at, unpublished_at`
+	row := s.db.QueryRowContext(context.Background(), query, title, string(input.Type), strings.TrimSpace(input.AdminNote))
 	created, err := scanRail(row)
 	if err != nil {
 		return Rail{}, err
@@ -66,7 +66,7 @@ func (s *PostgresStore) Create(input CreateInput) (Rail, error) {
 }
 
 func (s *PostgresStore) Get(id int) (Rail, error) {
-	query := `SELECT id, title, rail_type, position, is_published, published_at, unpublished_at FROM rails WHERE id = $1`
+	query := `SELECT id, title, rail_type, admin_note, position, is_published, published_at, unpublished_at FROM rails WHERE id = $1`
 	row := s.db.QueryRowContext(context.Background(), query, id)
 	rail, err := scanRail(row)
 	if err != nil {
@@ -88,8 +88,8 @@ func (s *PostgresStore) Update(id int, input UpdateInput) (Rail, error) {
 		return Rail{}, ErrDuplicateTitle
 	}
 
-	query := `UPDATE rails SET title = $1, updated_at = NOW() WHERE id = $2 RETURNING id, title, rail_type, position, is_published, published_at, unpublished_at`
-	row := s.db.QueryRowContext(context.Background(), query, title, id)
+	query := `UPDATE rails SET title = $1, admin_note = $2, updated_at = NOW() WHERE id = $3 RETURNING id, title, rail_type, admin_note, position, is_published, published_at, unpublished_at`
+	row := s.db.QueryRowContext(context.Background(), query, title, strings.TrimSpace(input.AdminNote), id)
 	updated, err := scanRail(row)
 	if err != nil {
 		return Rail{}, err
@@ -130,7 +130,7 @@ func (s *PostgresStore) RemoveItem(id int, itemID int) (Rail, error) {
 }
 
 func (s *PostgresStore) Publish(id int) (Rail, error) {
-	query := `UPDATE rails SET is_published = TRUE, published_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING id, title, rail_type, position, is_published, published_at, unpublished_at`
+	query := `UPDATE rails SET is_published = TRUE, published_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING id, title, rail_type, admin_note, position, is_published, published_at, unpublished_at`
 	row := s.db.QueryRowContext(context.Background(), query, id)
 	updated, err := scanRail(row)
 	if err != nil {
@@ -145,7 +145,7 @@ func (s *PostgresStore) Publish(id int) (Rail, error) {
 }
 
 func (s *PostgresStore) Unpublish(id int) (Rail, error) {
-	query := `UPDATE rails SET is_published = FALSE, unpublished_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING id, title, rail_type, position, is_published, published_at, unpublished_at`
+	query := `UPDATE rails SET is_published = FALSE, unpublished_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING id, title, rail_type, admin_note, position, is_published, published_at, unpublished_at`
 	row := s.db.QueryRowContext(context.Background(), query, id)
 	updated, err := scanRail(row)
 	if err != nil {
@@ -243,7 +243,7 @@ func scanRail(scanner interface{ Scan(dest ...any) error }) (Rail, error) {
 	var railType string
 	var publishedAt sql.NullTime
 	var unpublishedAt sql.NullTime
-	if err := scanner.Scan(&rail.ID, &rail.Title, &railType, &rail.Position, &rail.IsPublished, &publishedAt, &unpublishedAt); err != nil {
+	if err := scanner.Scan(&rail.ID, &rail.Title, &railType, &rail.AdminNote, &rail.Position, &rail.IsPublished, &publishedAt, &unpublishedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Rail{}, ErrNotFound
 		}

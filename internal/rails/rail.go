@@ -23,6 +23,7 @@ func (t RailType) IsValid() bool {
 type Rail struct {
 	ID            int
 	Title         string
+	AdminNote     string
 	Type          RailType
 	ItemIDs       []int
 	IsPublished   bool
@@ -34,6 +35,7 @@ type Rail struct {
 type ListItem struct {
 	ID            int
 	Title         string
+	AdminNote     string
 	Type          RailType
 	ItemCount     int
 	IsPublished   bool
@@ -43,12 +45,14 @@ type ListItem struct {
 }
 
 type CreateInput struct {
-	Title string
-	Type  RailType
+	Title     string
+	Type      RailType
+	AdminNote string
 }
 
 type UpdateInput struct {
-	Title string
+	Title     string
+	AdminNote string
 }
 
 type Store interface {

@@ -7,7 +7,7 @@ import (
 
 func TestMemoryStoreCreateDefaultsUnpublishedAndUniqueTitle(t *testing.T) {
 	store := NewMemoryStore()
-	created, err := store.Create(CreateInput{Title: "Top Picks", Type: RailTypeBook})
+	created, err := store.Create(CreateInput{Title: "Top Picks", Type: RailTypeBook, AdminNote: "Internal note"})
 	if err != nil {
 		t.Fatalf("create returned error: %v", err)
 	}
@@ -23,10 +23,29 @@ func TestMemoryStoreCreateDefaultsUnpublishedAndUniqueTitle(t *testing.T) {
 	if created.Type != RailTypeBook {
 		t.Fatalf("expected type BOOK, got %s", created.Type)
 	}
+	if created.AdminNote != "Internal note" {
+		t.Fatalf("expected admin note to persist, got %q", created.AdminNote)
+	}
 
 	_, err = store.Create(CreateInput{Title: "top picks", Type: RailTypeBundle})
 	if !errors.Is(err, ErrDuplicateTitle) {
 		t.Fatalf("expected ErrDuplicateTitle, got %v", err)
+	}
+}
+
+func TestMemoryStoreUpdateAdminNote(t *testing.T) {
+	store := NewMemoryStore()
+	created, err := store.Create(CreateInput{Title: "Top Picks", Type: RailTypeBook})
+	if err != nil {
+		t.Fatalf("create returned error: %v", err)
+	}
+
+	updated, err := store.Update(created.ID, UpdateInput{Title: "Top Picks", AdminNote: "Updated note"})
+	if err != nil {
+		t.Fatalf("update returned error: %v", err)
+	}
+	if updated.AdminNote != "Updated note" {
+		t.Fatalf("expected updated admin note, got %q", updated.AdminNote)
 	}
 }
 

@@ -28,6 +28,7 @@ func (s *MemoryStore) List() ([]ListItem, error) {
 		items = append(items, ListItem{
 			ID:            rail.ID,
 			Title:         rail.Title,
+			AdminNote:     rail.AdminNote,
 			Type:          rail.Type,
 			ItemCount:     len(rail.ItemIDs),
 			IsPublished:   rail.IsPublished,
@@ -51,6 +52,7 @@ func (s *MemoryStore) Create(input CreateInput) (Rail, error) {
 	rail := Rail{
 		ID:            s.nextID,
 		Title:         strings.TrimSpace(input.Title),
+		AdminNote:     strings.TrimSpace(input.AdminNote),
 		Type:          input.Type,
 		ItemIDs:       []int{},
 		IsPublished:   false,
@@ -86,6 +88,7 @@ func (s *MemoryStore) Update(id int, input UpdateInput) (Rail, error) {
 		return Rail{}, ErrDuplicateTitle
 	}
 	s.rails[index].Title = strings.TrimSpace(input.Title)
+	s.rails[index].AdminNote = strings.TrimSpace(input.AdminNote)
 	return cloneRail(s.rails[index]), nil
 }
 

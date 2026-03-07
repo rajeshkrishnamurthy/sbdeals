@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -45,6 +46,7 @@ func TestCreateRailAndDuplicateTitleValidation(t *testing.T) {
 	form := url.Values{}
 	form.Set("title", "Weekend Picks")
 	form.Set("type", "BOOK")
+	form.Set("admin_note", "Internal note")
 	req := httptest.NewRequest(http.MethodPost, "/admin/rails", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rr := httptest.NewRecorder()
@@ -62,6 +64,9 @@ func TestCreateRailAndDuplicateTitleValidation(t *testing.T) {
 	}
 	if created.Type != rails.RailTypeBook {
 		t.Fatalf("expected BOOK type, got %s", created.Type)
+	}
+	if created.AdminNote != "Internal note" {
+		t.Fatalf("expected admin note to persist, got %q", created.AdminNote)
 	}
 
 	dupReq := httptest.NewRequest(http.MethodPost, "/admin/rails", strings.NewReader(form.Encode()))
@@ -106,6 +111,7 @@ func TestRailEditKeepsTypeImmutableAndSupportsPublishRecency(t *testing.T) {
 	form := url.Values{}
 	form.Set("title", "Renamed Rail")
 	form.Set("type", "BUNDLE")
+	form.Set("admin_note", "Updated note")
 	updateReq := httptest.NewRequest(http.MethodPost, "/admin/rails/"+strconv.Itoa(created.ID), strings.NewReader(form.Encode()))
 	updateReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	updateRR := httptest.NewRecorder()
@@ -123,6 +129,9 @@ func TestRailEditKeepsTypeImmutableAndSupportsPublishRecency(t *testing.T) {
 	}
 	if updated.Type != rails.RailTypeBook {
 		t.Fatalf("expected type to remain BOOK, got %s", updated.Type)
+	}
+	if updated.AdminNote != "Updated note" {
+		t.Fatalf("expected updated admin note, got %q", updated.AdminNote)
 	}
 }
 
@@ -236,7 +245,7 @@ func TestRailItemsTypeMismatchShowsValidationToast(t *testing.T) {
 		t.Fatalf("create rail: %v", err)
 	}
 
-	mismatchRR := postRailItemRequest(s, rail.ID, "add", "2")
+	mismatchRR := postRailItemRequest(s, rail.ID, "add", "3")
 	if mismatchRR.Code != http.StatusSeeOther {
 		t.Fatalf("expected 303, got %d", mismatchRR.Code)
 	}
@@ -282,7 +291,109 @@ func TestRailItemsAllowSameItemAcrossRails(t *testing.T) {
 	}
 }
 
-func TestRailsFormAssetServesSearchScript(t *testing.T) {
+func TestRailItemPickerBundleFiltersApplyDeterministically(t *testing.T) {
+	s, railStore, _, _, _ := newRailsFixture(t)
+	rail, err := railStore.Create(rails.CreateInput{Title: "Bundle Rail", Type: rails.RailTypeBundle})
+	if err != nil {
+		t.Fatalf("create rail: %v", err)
+	}
+
+	// Apply explicit filter set that should match only "Bundle Two".
+	path := "/admin/rails/" + strconv.Itoa(rail.ID) + "?q=Two&category=Fiction&priceMin=290&priceMax=305&discountMin=40&discountMax=50"
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	s.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Bundle Two") {
+		t.Fatalf("expected filtered result to include Bundle Two")
+	}
+	if strings.Contains(body, "Bundle One") {
+		t.Fatalf("expected Bundle One to be filtered out")
+	}
+	if !strings.Contains(body, "Apply Filters") {
+		t.Fatalf("expected explicit apply filters control")
+	}
+}
+
+func TestRailItemPickerInvalidRangeShowsInlineError(t *testing.T) {
+	s, railStore, _, _, _ := newRailsFixture(t)
+	rail, err := railStore.Create(rails.CreateInput{Title: "Bundle Rail", Type: rails.RailTypeBundle})
+	if err != nil {
+		t.Fatalf("create rail: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/admin/rails/"+strconv.Itoa(rail.ID)+"?priceMin=400&priceMax=300", nil)
+	s.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Minimum price cannot be greater than maximum price.") {
+		t.Fatalf("expected inline range validation error")
+	}
+	if !strings.Contains(body, `class="toast-error"`) {
+		t.Fatalf("expected range validation toast")
+	}
+}
+
+func TestRailItemPickerExcludesAlreadyAddedItems(t *testing.T) {
+	s, railStore, _, _, _ := newRailsFixture(t)
+	rail, err := railStore.Create(rails.CreateInput{Title: "Books Rail", Type: rails.RailTypeBook})
+	if err != nil {
+		t.Fatalf("create rail: %v", err)
+	}
+
+	addRR := postRailItemRequest(s, rail.ID, "add", "1")
+	if addRR.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", addRR.Code)
+	}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/admin/rails/"+strconv.Itoa(rail.ID), nil)
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	addPattern := regexp.MustCompile(fmt.Sprintf(`(?s)<form method="post" action="/admin/rails/%d/items/add">\s*<input type="hidden" name="item_id" value="1"`, rail.ID))
+	if addPattern.MatchString(body) {
+		t.Fatalf("expected already-added item to be excluded from available picker list")
+	}
+	removePattern := regexp.MustCompile(fmt.Sprintf(`(?s)<form method="post" action="/admin/rails/%d/items/remove">\s*<input type="hidden" name="item_id" value="1"`, rail.ID))
+	if !removePattern.MatchString(body) {
+		t.Fatalf("expected already-added item to remain in selected list")
+	}
+}
+
+func TestRailItemPickerRendersCommonColumnsAndHoverPreview(t *testing.T) {
+	s, railStore, _, _, _ := newRailsFixture(t)
+	rail, err := railStore.Create(rails.CreateInput{Title: "Books Rail", Type: rails.RailTypeBook})
+	if err != nil {
+		t.Fatalf("create rail: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/admin/rails/"+strconv.Itoa(rail.ID), nil)
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	checks := []string{"Image", "Title", "Category", "Price", "Discount", "thumb-preview", "Reset Filters", "Admin Note"}
+	for _, check := range checks {
+		if !strings.Contains(body, check) {
+			t.Fatalf("expected body to contain %q", check)
+		}
+	}
+}
+
+func TestRailsFormAssetServesScript(t *testing.T) {
 	s, _, _, _, _ := newRailsFixture(t)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/assets/rails-form.js", bytes.NewBuffer(nil))
@@ -291,7 +402,7 @@ func TestRailsFormAssetServesSearchScript(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
-	if !strings.Contains(rr.Body.String(), "rail-item-search") {
+	if strings.TrimSpace(rr.Body.String()) == "" {
 		t.Fatalf("expected rails-form.js content")
 	}
 }
@@ -329,12 +440,27 @@ func newRailsFixture(t *testing.T) (*Server, *rails.MemoryStore, *books.MemorySt
 	if err != nil {
 		t.Fatalf("create book failed: %v", err)
 	}
+	_, err = bookStore.Create(books.CreateInput{
+		Title:      "Book Two",
+		Cover:      books.Cover{Data: []byte("img2"), MimeType: "image/png"},
+		SupplierID: supplier.ID,
+		Category:   "Children",
+		Format:     "Paperback",
+		Condition:  "Very good",
+		MRP:        150,
+		MyPrice:    90,
+	})
+	if err != nil {
+		t.Fatalf("create book two failed: %v", err)
+	}
 
 	bundleStore := bundles.NewMemoryStore(
 		map[int]string{supplier.ID: supplier.Name},
 		[]bundles.PickerBook{
 			{BookID: 10, Title: "Bundle Book A", SupplierID: supplier.ID, Category: "Fiction", Condition: "Very good", MRP: 300, MyPrice: 200, InStock: true},
 			{BookID: 11, Title: "Bundle Book B", SupplierID: supplier.ID, Category: "Fiction", Condition: "Very good", MRP: 250, MyPrice: 180, InStock: true},
+			{BookID: 12, Title: "Bundle Book C", SupplierID: supplier.ID, Category: "Children", Condition: "Very good", MRP: 150, MyPrice: 100, InStock: true},
+			{BookID: 13, Title: "Bundle Book D", SupplierID: supplier.ID, Category: "Children", Condition: "Very good", MRP: 130, MyPrice: 90, InStock: true},
 		},
 	)
 	if _, err := bundleStore.Create(bundles.CreateInput{
@@ -356,6 +482,16 @@ func newRailsFixture(t *testing.T) (*Server, *rails.MemoryStore, *books.MemorySt
 		BundlePrice:       300,
 	}); err != nil {
 		t.Fatalf("create bundle two failed: %v", err)
+	}
+	if _, err := bundleStore.Create(bundles.CreateInput{
+		Name:              "Bundle Three",
+		SupplierID:        supplier.ID,
+		Category:          "Children",
+		AllowedConditions: []string{"Very good"},
+		BookIDs:           []int{12, 13},
+		BundlePrice:       220,
+	}); err != nil {
+		t.Fatalf("create bundle three failed: %v", err)
 	}
 
 	railStore := rails.NewMemoryStore()

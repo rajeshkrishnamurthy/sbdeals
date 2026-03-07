@@ -9,13 +9,17 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/books"
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/bundles"
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/rails"
 )
 
-var railValidationOrder = []string{"title", "type"}
+var railValidationOrder = []string{"title", "type", "admin_note"}
+var railPickerValidationOrder = []string{"category", "price_range", "discount_range"}
+
+const railAdminNoteMaxLen = 250
 
 func (s *Server) handleRailsCollection(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -41,6 +45,7 @@ func (s *Server) handleRailNew(w http.ResponseWriter, r *http.Request) {
 		Input:         railFormInput{},
 		TypeOptions:   []rails.RailType{rails.RailTypeBook, rails.RailTypeBundle},
 		Errors:        map[string]string{},
+		FilterErrors:  map[string]string{},
 		IsCreate:      true,
 	})
 }
@@ -193,6 +198,7 @@ func (s *Server) createRail(w http.ResponseWriter, r *http.Request) {
 			Input:           input,
 			TypeOptions:     []rails.RailType{rails.RailTypeBook, rails.RailTypeBundle},
 			Errors:          errorsByField,
+			FilterErrors:    map[string]string{},
 			ValidationToast: buildValidationToast(errorsByField, railValidationOrder),
 			IsCreate:        true,
 		})
@@ -200,8 +206,9 @@ func (s *Server) createRail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, err := s.railStore.Create(rails.CreateInput{
-		Title: input.Title,
-		Type:  rails.RailType(input.Type),
+		Title:     input.Title,
+		Type:      rails.RailType(input.Type),
+		AdminNote: input.AdminNote,
 	})
 	if errors.Is(err, rails.ErrDuplicateTitle) {
 		errorsByField := map[string]string{"title": "Rail title must be unique."}
@@ -214,6 +221,7 @@ func (s *Server) createRail(w http.ResponseWriter, r *http.Request) {
 			Input:           input,
 			TypeOptions:     []rails.RailType{rails.RailTypeBook, rails.RailTypeBundle},
 			Errors:          errorsByField,
+			FilterErrors:    map[string]string{},
 			ValidationToast: buildValidationToast(errorsByField, railValidationOrder),
 			IsCreate:        true,
 		})
@@ -238,10 +246,21 @@ func (s *Server) renderRailDetail(w http.ResponseWriter, r *http.Request, railID
 		return
 	}
 
-	availableItems, selectedItems, err := s.buildRailItemsForDetail(railData)
+	filterInput := readRailPickerFilterInput(r.URL.Query())
+	filterCriteria, filterErrors := parseRailPickerFilters(filterInput, railData.Type)
+
+	availableItems, selectedItems, err := s.buildRailItemsForDetail(railData, filterCriteria, len(filterErrors) == 0)
 	if err != nil {
 		http.Error(w, "failed to load rail items", http.StatusInternalServerError)
 		return
+	}
+
+	validationToast := strings.TrimSpace(r.URL.Query().Get("error"))
+	if validationToast == "" {
+		validationToast = buildValidationToast(filterErrors, railPickerValidationOrder)
+	}
+	if len(filterErrors) > 0 {
+		w.WriteHeader(http.StatusBadRequest)
 	}
 
 	s.renderRailForm(w, railFormViewModel{
@@ -250,10 +269,14 @@ func (s *Server) renderRailDetail(w http.ResponseWriter, r *http.Request, railID
 		SubmitLabel:       "Save Changes",
 		ActiveSection:     "rails",
 		Flash:             r.URL.Query().Get("flash"),
-		ValidationToast:   strings.TrimSpace(r.URL.Query().Get("error")),
-		Input:             railFormInput{Title: railData.Title, Type: string(railData.Type)},
+		ValidationToast:   validationToast,
+		Input:             railFormInput{Title: railData.Title, Type: string(railData.Type), AdminNote: railData.AdminNote},
 		ImmutableType:     railTypeLabel(railData.Type),
 		Errors:            map[string]string{},
+		FilterInput:       filterInput,
+		FilterErrors:      filterErrors,
+		CategoryOptions:   bookCategoryOptions,
+		ShowRangeFilters:  railData.Type == rails.RailTypeBundle,
 		RailID:            railData.ID,
 		ShowPublishToggle: true,
 		PublishAction:     fmt.Sprintf("/admin/rails/%d/%s?from=edit", railData.ID, toggleActionPath(railData.IsPublished)),
@@ -280,20 +303,27 @@ func (s *Server) updateRail(w http.ResponseWriter, r *http.Request, railID int) 
 		return
 	}
 
-	title := strings.TrimSpace(r.Form.Get("title"))
+	input := railFormInput{
+		Title:     strings.TrimSpace(r.Form.Get("title")),
+		Type:      string(railData.Type),
+		AdminNote: strings.TrimSpace(r.Form.Get("admin_note")),
+	}
 	errorsByField := map[string]string{}
-	if title == "" {
+	if input.Title == "" {
 		errorsByField["title"] = "Rail title is required."
 	}
+	if noteError := validateRailAdminNote(input.AdminNote); noteError != "" {
+		errorsByField["admin_note"] = noteError
+	}
 	if len(errorsByField) > 0 {
-		s.renderRailUpdateValidation(w, railData, title, errorsByField)
+		s.renderRailUpdateValidation(w, railData, input, errorsByField)
 		return
 	}
 
-	_, err = s.railStore.Update(railID, rails.UpdateInput{Title: title})
+	_, err = s.railStore.Update(railID, rails.UpdateInput{Title: input.Title, AdminNote: input.AdminNote})
 	if errors.Is(err, rails.ErrDuplicateTitle) {
 		errorsByField["title"] = "Rail title must be unique."
-		s.renderRailUpdateValidation(w, railData, title, errorsByField)
+		s.renderRailUpdateValidation(w, railData, input, errorsByField)
 		return
 	}
 	if err != nil {
@@ -308,8 +338,8 @@ func (s *Server) updateRail(w http.ResponseWriter, r *http.Request, railID int) 
 	http.Redirect(w, r, fmt.Sprintf("/admin/rails/%d?flash=%s", railID, url.QueryEscape("Rail updated successfully.")), http.StatusSeeOther)
 }
 
-func (s *Server) renderRailUpdateValidation(w http.ResponseWriter, railData rails.Rail, title string, errorsByField map[string]string) {
-	availableItems, selectedItems, err := s.buildRailItemsForDetail(railData)
+func (s *Server) renderRailUpdateValidation(w http.ResponseWriter, railData rails.Rail, input railFormInput, errorsByField map[string]string) {
+	availableItems, selectedItems, err := s.buildRailItemsForDetail(railData, railPickerFilterCriteria{}, true)
 	if err != nil {
 		http.Error(w, "failed to load rail items", http.StatusInternalServerError)
 		return
@@ -320,9 +350,13 @@ func (s *Server) renderRailUpdateValidation(w http.ResponseWriter, railData rail
 		Action:            fmt.Sprintf("/admin/rails/%d", railData.ID),
 		SubmitLabel:       "Save Changes",
 		ActiveSection:     "rails",
-		Input:             railFormInput{Title: title, Type: string(railData.Type)},
+		Input:             input,
 		ImmutableType:     railTypeLabel(railData.Type),
 		Errors:            errorsByField,
+		FilterInput:       railPickerFilterInput{},
+		FilterErrors:      map[string]string{},
+		CategoryOptions:   bookCategoryOptions,
+		ShowRangeFilters:  railData.Type == rails.RailTypeBundle,
 		ValidationToast:   buildValidationToast(errorsByField, railValidationOrder),
 		RailID:            railData.ID,
 		ShowPublishToggle: true,
@@ -511,8 +545,9 @@ func railPublishRedirectPath(r *http.Request, railID int, flash string, errorMes
 
 func readRailCreateInput(r *http.Request) railFormInput {
 	return railFormInput{
-		Title: strings.TrimSpace(r.Form.Get("title")),
-		Type:  strings.TrimSpace(r.Form.Get("type")),
+		Title:     strings.TrimSpace(r.Form.Get("title")),
+		Type:      strings.TrimSpace(r.Form.Get("type")),
+		AdminNote: strings.TrimSpace(r.Form.Get("admin_note")),
 	}
 }
 
@@ -524,7 +559,17 @@ func validateRailCreateInput(input railFormInput) map[string]string {
 	if !rails.RailType(input.Type).IsValid() {
 		errs["type"] = "Rail type is required."
 	}
+	if noteError := validateRailAdminNote(input.AdminNote); noteError != "" {
+		errs["admin_note"] = noteError
+	}
 	return errs
+}
+
+func validateRailAdminNote(note string) string {
+	if utf8.RuneCountInString(strings.TrimSpace(note)) > railAdminNoteMaxLen {
+		return "Admin note must be 250 characters or fewer."
+	}
+	return ""
 }
 
 func parsePositiveID(raw string) (int, bool) {
@@ -585,11 +630,112 @@ func railActionFromParts(parts []string) (string, bool) {
 }
 
 type railItemOption struct {
-	ID    int
-	Title string
+	ID           int
+	Title        string
+	Category     string
+	Price        float64
+	DiscountPct  float64
+	ThumbnailURL string
+	HasThumbnail bool
 }
 
-func (s *Server) buildRailItemsForDetail(railData rails.Rail) ([]railItemOption, []railItemOption, error) {
+type railPickerFilterInput struct {
+	Query       string
+	Category    string
+	PriceMin    string
+	PriceMax    string
+	DiscountMin string
+	DiscountMax string
+}
+
+type railPickerFilterCriteria struct {
+	Query       string
+	Category    string
+	PriceMin    *float64
+	PriceMax    *float64
+	DiscountMin *float64
+	DiscountMax *float64
+}
+
+func readRailPickerFilterInput(values url.Values) railPickerFilterInput {
+	return railPickerFilterInput{
+		Query:       strings.TrimSpace(values.Get("q")),
+		Category:    strings.TrimSpace(values.Get("category")),
+		PriceMin:    strings.TrimSpace(values.Get("priceMin")),
+		PriceMax:    strings.TrimSpace(values.Get("priceMax")),
+		DiscountMin: strings.TrimSpace(values.Get("discountMin")),
+		DiscountMax: strings.TrimSpace(values.Get("discountMax")),
+	}
+}
+
+func parseRailPickerFilters(input railPickerFilterInput, railType rails.RailType) (railPickerFilterCriteria, map[string]string) {
+	criteria := railPickerFilterCriteria{
+		Query:    strings.ToLower(input.Query),
+		Category: input.Category,
+	}
+	errs := map[string]string{}
+
+	if input.Category != "" && validateOption(input.Category, bookCategoryOptions, "", "Please choose a valid category.") != "" {
+		errs["category"] = "Please choose a valid category."
+	}
+	if railType != rails.RailTypeBundle {
+		return criteria, errs
+	}
+
+	priceMin, priceMax, priceErr := parseBoundedRange(
+		input.PriceMin,
+		input.PriceMax,
+		"Provide both minimum and maximum price.",
+		"Price range values must be valid numbers.",
+		"Minimum price cannot be greater than maximum price.",
+	)
+	if priceErr != "" {
+		errs["price_range"] = priceErr
+	} else {
+		criteria.PriceMin = priceMin
+		criteria.PriceMax = priceMax
+	}
+
+	discountMin, discountMax, discountErr := parseBoundedRange(
+		input.DiscountMin,
+		input.DiscountMax,
+		"Provide both minimum and maximum discount.",
+		"Discount range values must be valid numbers.",
+		"Minimum discount cannot be greater than maximum discount.",
+	)
+	if discountErr != "" {
+		errs["discount_range"] = discountErr
+	} else {
+		criteria.DiscountMin = discountMin
+		criteria.DiscountMax = discountMax
+	}
+	return criteria, errs
+}
+
+func parseBoundedRange(minRaw, maxRaw, missingMessage, invalidMessage, minGreaterMessage string) (*float64, *float64, string) {
+	minText := strings.TrimSpace(minRaw)
+	maxText := strings.TrimSpace(maxRaw)
+	if minText == "" && maxText == "" {
+		return nil, nil, ""
+	}
+	if minText == "" || maxText == "" {
+		return nil, nil, missingMessage
+	}
+	minValue, err := strconv.ParseFloat(minText, 64)
+	if err != nil {
+		return nil, nil, invalidMessage
+	}
+	maxValue, err := strconv.ParseFloat(maxText, 64)
+	if err != nil {
+		return nil, nil, invalidMessage
+	}
+	if minValue > maxValue {
+		return nil, nil, minGreaterMessage
+	}
+	return &minValue, &maxValue, ""
+}
+
+func (s *Server) buildRailItemsForDetail(railData rails.Rail, filters railPickerFilterCriteria, applyFilters bool) ([]railItemOption, []railItemOption, error) {
 	allItems, err := s.loadRailTypeItems(railData.Type)
 	if err != nil {
 		return nil, nil, err
@@ -617,36 +763,142 @@ func (s *Server) buildRailItemsForDetail(railData rails.Rail) ([]railItemOption,
 		}
 		available = append(available, item)
 	}
+	if applyFilters {
+		available = filterRailItems(available, filters, railData.Type)
+	}
 	return available, selected, nil
 }
 
 func (s *Server) loadRailTypeItems(railType rails.RailType) ([]railItemOption, error) {
 	switch railType {
 	case rails.RailTypeBook:
-		booksList, err := s.bookStore.List()
-		if err != nil {
-			return nil, err
-		}
-		out := make([]railItemOption, 0, len(booksList))
-		for _, item := range booksList {
-			out = append(out, railItemOption{ID: item.ID, Title: item.Title})
-		}
-		sortRailItems(out)
-		return out, nil
+		return s.loadBookRailItems()
 	case rails.RailTypeBundle:
-		bundlesList, err := s.bundleStore.List()
-		if err != nil {
-			return nil, err
-		}
-		out := make([]railItemOption, 0, len(bundlesList))
-		for _, item := range bundlesList {
-			out = append(out, railItemOption{ID: item.ID, Title: bundleLabel(item.Name, item.ID)})
-		}
-		sortRailItems(out)
-		return out, nil
+		return s.loadBundleRailItems()
 	default:
 		return nil, fmt.Errorf("unsupported rail type: %s", railType)
 	}
+}
+
+func (s *Server) loadBookRailItems() ([]railItemOption, error) {
+	booksList, err := s.bookStore.List()
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]railItemOption, 0, len(booksList))
+	for _, item := range booksList {
+		book, err := s.bookStore.Get(item.ID)
+		if errors.Is(err, books.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		thumbnailURL := ""
+		hasThumbnail := strings.TrimSpace(book.CoverMimeType) != ""
+		if hasThumbnail {
+			thumbnailURL = fmt.Sprintf("/admin/books/%d/cover", book.ID)
+		}
+		out = append(out, railItemOption{
+			ID:           book.ID,
+			Title:        book.Title,
+			Category:     book.Category,
+			Price:        book.MyPrice,
+			DiscountPct:  books.ComputeDiscount(book.MRP, book.MyPrice),
+			ThumbnailURL: thumbnailURL,
+			HasThumbnail: hasThumbnail,
+		})
+	}
+	sortRailItems(out)
+	return out, nil
+}
+
+func (s *Server) loadBundleRailItems() ([]railItemOption, error) {
+	bundlesList, err := s.bundleStore.List()
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]railItemOption, 0, len(bundlesList))
+	for _, item := range bundlesList {
+		bundleItem, err := s.bundleStore.Get(item.ID)
+		if errors.Is(err, bundles.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		thumbnailURL, hasThumbnail, err := s.bundleThumbnailURL(bundleItem.BookIDs)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, railItemOption{
+			ID:           item.ID,
+			Title:        bundleLabel(item.Name, item.ID),
+			Category:     item.Category,
+			Price:        item.BundlePrice,
+			DiscountPct:  bundleDiscountPct(bundleItem),
+			ThumbnailURL: thumbnailURL,
+			HasThumbnail: hasThumbnail,
+		})
+	}
+	sortRailItems(out)
+	return out, nil
+}
+
+func (s *Server) bundleThumbnailURL(bookIDs []int) (string, bool, error) {
+	for _, bookID := range bookIDs {
+		book, err := s.bookStore.Get(bookID)
+		if errors.Is(err, books.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return "", false, err
+		}
+		if strings.TrimSpace(book.CoverMimeType) != "" {
+			return fmt.Sprintf("/admin/books/%d/cover", book.ID), true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func bundleDiscountPct(bundle bundles.Bundle) float64 {
+	totalMRP := 0.0
+	for _, item := range bundle.Books {
+		totalMRP += item.MRP
+	}
+	return books.ComputeDiscount(totalMRP, bundle.BundlePrice)
+}
+
+func filterRailItems(items []railItemOption, filters railPickerFilterCriteria, railType rails.RailType) []railItemOption {
+	filtered := make([]railItemOption, 0, len(items))
+	for _, item := range items {
+		if !railItemMatchesFilters(item, filters, railType) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
+}
+
+func railItemMatchesFilters(item railItemOption, filters railPickerFilterCriteria, railType rails.RailType) bool {
+	if filters.Query != "" && !strings.Contains(strings.ToLower(item.Title), filters.Query) {
+		return false
+	}
+	if filters.Category != "" && item.Category != filters.Category {
+		return false
+	}
+	if railType != rails.RailTypeBundle {
+		return true
+	}
+	if filters.PriceMin != nil && filters.PriceMax != nil && (item.Price < *filters.PriceMin || item.Price > *filters.PriceMax) {
+		return false
+	}
+	if filters.DiscountMin != nil && filters.DiscountMax != nil && (item.DiscountPct < *filters.DiscountMin || item.DiscountPct > *filters.DiscountMax) {
+		return false
+	}
+	return true
 }
 
 func sortRailItems(items []railItemOption) {
@@ -679,8 +931,9 @@ type railsListViewModel struct {
 }
 
 type railFormInput struct {
-	Title string
-	Type  string
+	Title     string
+	Type      string
+	AdminNote string
 }
 
 type railFormViewModel struct {
@@ -694,6 +947,10 @@ type railFormViewModel struct {
 	TypeOptions       []rails.RailType
 	ImmutableType     string
 	Errors            map[string]string
+	FilterInput       railPickerFilterInput
+	FilterErrors      map[string]string
+	CategoryOptions   []string
+	ShowRangeFilters  bool
 	IsCreate          bool
 	RailID            int
 	ShowPublishToggle bool
@@ -714,8 +971,21 @@ func (m railFormViewModel) Error(field string) string {
 	return m.Errors[field]
 }
 
+func (m railFormViewModel) HasFilterError(field string) bool {
+	_, ok := m.FilterErrors[field]
+	return ok
+}
+
+func (m railFormViewModel) FilterError(field string) string {
+	return m.FilterErrors[field]
+}
+
 func (m railFormViewModel) TypeSelected(value rails.RailType) bool {
 	return m.Input.Type == string(value)
+}
+
+func (m railFormViewModel) CategorySelected(value string) bool {
+	return m.FilterInput.Category == value
 }
 
 func (s *Server) renderRailForm(w http.ResponseWriter, data railFormViewModel) {
@@ -818,6 +1088,8 @@ var railsListTemplate = template.Must(template.New("rails-list").Funcs(template.
 var railFormTemplate = template.Must(template.New("rail-form").Funcs(template.FuncMap{
 	"adminNav":      adminNav,
 	"railTypeLabel": railTypeLabel,
+	"money":         func(v float64) string { return fmt.Sprintf("%.2f", v) },
+	"discount":      formatRoundedDiscount,
 }).Parse(`<!doctype html>
 <html lang="en">
 <head>
@@ -836,7 +1108,8 @@ var railFormTemplate = template.Must(template.New("rail-form").Funcs(template.Fu
     .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:20px; margin-bottom:16px; }
     .field { margin:0 0 14px; }
     label { display:block; font-weight:600; margin-bottom:6px; }
-    input, select { width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font:inherit; }
+    input, select, textarea { width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font:inherit; }
+    textarea { min-height:90px; resize:vertical; }
     .read-only { padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:#f8fafc; font-weight:600; }
     .error { color: var(--error); margin-top:6px; font-size:0.9rem; }
     .toast-success { position:fixed; top:16px; right:16px; max-width:min(420px, 90vw); z-index:999; margin:0; padding:10px 12px; border-radius:10px; background:#d1fae5; color:#065f46; border:1px solid #6ee7b7; box-shadow:0 8px 24px rgba(0,0,0,0.12); }
@@ -850,11 +1123,19 @@ var railFormTemplate = template.Must(template.New("rail-form").Funcs(template.Fu
     .toggle.off { background:#f3f4f6; color:#374151; border-color:#d1d5db; }
     .recency { color:var(--muted); font-size:0.85rem; }
     .picker-grid { display:grid; grid-template-columns: 1fr 1fr; gap:14px; }
+    .filter-grid { display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:10px; margin-bottom:12px; }
+    .range-grid { display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+    .eligible-scroll { max-height:420px; overflow-y:auto; }
     table { width:100%; border-collapse:collapse; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
     th, td { border-bottom:1px solid var(--line); padding:8px; text-align:left; vertical-align:middle; }
     th { background:#f8fafc; color:var(--muted); font-size:0.85rem; }
     .tiny-btn { padding:6px 10px; border:1px solid var(--line); border-radius:6px; background:#fff; cursor:pointer; }
-    @media (max-width: 960px) { .picker-grid { grid-template-columns: 1fr; } }
+    .thumb-wrap { position:relative; width:44px; height:44px; }
+    .thumb-image, .thumb-placeholder { width:44px; height:44px; border-radius:8px; border:1px solid var(--line); object-fit:cover; display:block; }
+    .thumb-placeholder { display:flex; align-items:center; justify-content:center; font-size:0.65rem; color:var(--muted); background:#f8fafc; }
+    .thumb-preview { position:absolute; top:-6px; left:50px; width:130px; height:170px; border-radius:10px; border:1px solid var(--line); object-fit:cover; box-shadow:0 10px 24px rgba(0,0,0,0.16); background:#fff; display:none; z-index:10; }
+    .thumb-wrap:hover .thumb-preview { display:block; }
+    @media (max-width: 960px) { .picker-grid { grid-template-columns: 1fr; } .filter-grid { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -900,6 +1181,12 @@ var railFormTemplate = template.Must(template.New("rail-form").Funcs(template.Fu
       </div>
       {{end}}
 
+      <div class="field">
+        <label for="admin_note">Admin Note (optional)</label>
+        <textarea id="admin_note" name="admin_note" maxlength="250">{{.Input.AdminNote}}</textarea>
+        {{if .HasError "admin_note"}}<div class="error">{{.Error "admin_note"}}</div>{{end}}
+      </div>
+
       <div class="row">
         <button class="button" type="submit">{{.SubmitLabel}}</button>
         <a class="secondary" href="/admin/rails">Back to Rails</a>
@@ -909,52 +1196,118 @@ var railFormTemplate = template.Must(template.New("rail-form").Funcs(template.Fu
     {{if .ShowItemPanel}}
     <section class="card">
       <h2>Item Assignment</h2>
-      <div class="field">
-        <label for="rail-item-search">Search available items (title)</label>
-        <input id="rail-item-search" placeholder="Search title">
-      </div>
+      <form method="get" action="/admin/rails/{{.RailID}}">
+        <div class="filter-grid">
+          <div class="field">
+            <label for="rail-item-search">Title Search</label>
+            <input id="rail-item-search" name="q" value="{{.FilterInput.Query}}" placeholder="Search title">
+          </div>
+          <div class="field">
+            <label for="rail-item-category">Category</label>
+            <select id="rail-item-category" name="category">
+              <option value="">All categories</option>
+              {{range .CategoryOptions}}
+              <option value="{{.}}" {{if $.CategorySelected .}}selected{{end}}>{{.}}</option>
+              {{end}}
+            </select>
+            {{if .HasFilterError "category"}}<div class="error">{{.FilterError "category"}}</div>{{end}}
+          </div>
+          {{if .ShowRangeFilters}}
+          <div class="field">
+            <label>Price Range</label>
+            <div class="range-grid">
+              <input name="priceMin" value="{{.FilterInput.PriceMin}}" placeholder="Min">
+              <input name="priceMax" value="{{.FilterInput.PriceMax}}" placeholder="Max">
+            </div>
+            {{if .HasFilterError "price_range"}}<div class="error">{{.FilterError "price_range"}}</div>{{end}}
+          </div>
+          <div class="field">
+            <label>Discount % Range</label>
+            <div class="range-grid">
+              <input name="discountMin" value="{{.FilterInput.DiscountMin}}" placeholder="Min">
+              <input name="discountMax" value="{{.FilterInput.DiscountMax}}" placeholder="Max">
+            </div>
+            {{if .HasFilterError "discount_range"}}<div class="error">{{.FilterError "discount_range"}}</div>{{end}}
+          </div>
+          {{end}}
+        </div>
+        <div class="row">
+          <button class="button" type="submit">Apply Filters</button>
+          <a class="secondary" href="/admin/rails/{{.RailID}}">Reset Filters</a>
+        </div>
+      </form>
       <div class="picker-grid">
         <div>
           <h3>Available items</h3>
-          <table>
-            <thead><tr><th>Title</th><th></th></tr></thead>
-            <tbody>
-            {{range .AvailableItems}}
-              <tr data-rail-item-row data-title="{{.Title}}">
-                <td>{{.Title}}</td>
-                <td>
-                  <form method="post" action="/admin/rails/{{$.RailID}}/items/add">
-                    <input type="hidden" name="item_id" value="{{.ID}}">
-                    <button class="tiny-btn" type="submit">Add</button>
-                  </form>
-                </td>
-              </tr>
-            {{else}}
-              <tr><td colspan="2">No available items.</td></tr>
-            {{end}}
-            </tbody>
-          </table>
+          <div class="eligible-scroll">
+            <table>
+              <thead><tr><th>Image</th><th>Title</th><th>Category</th><th>Price</th><th>Discount</th><th></th></tr></thead>
+              <tbody>
+              {{range .AvailableItems}}
+                <tr>
+                  <td>
+                    <div class="thumb-wrap">
+                      {{if .HasThumbnail}}
+                      <img class="thumb-image" src="{{.ThumbnailURL}}" alt="{{.Title}} thumbnail">
+                      <img class="thumb-preview" src="{{.ThumbnailURL}}" alt="{{.Title}} preview">
+                      {{else}}
+                      <span class="thumb-placeholder">No image</span>
+                      {{end}}
+                    </div>
+                  </td>
+                  <td>{{.Title}}</td>
+                  <td>{{.Category}}</td>
+                  <td>{{money .Price}}</td>
+                  <td>{{discount .DiscountPct}}</td>
+                  <td>
+                    <form method="post" action="/admin/rails/{{$.RailID}}/items/add">
+                      <input type="hidden" name="item_id" value="{{.ID}}">
+                      <button class="tiny-btn" type="submit">Add</button>
+                    </form>
+                  </td>
+                </tr>
+              {{else}}
+                <tr><td colspan="6">No available items.</td></tr>
+              {{end}}
+              </tbody>
+            </table>
+          </div>
         </div>
         <div>
           <h3>Selected items</h3>
-          <table>
-            <thead><tr><th>Title</th><th></th></tr></thead>
-            <tbody>
-            {{range .SelectedItems}}
-              <tr>
-                <td>{{.Title}}</td>
-                <td>
-                  <form method="post" action="/admin/rails/{{$.RailID}}/items/remove">
-                    <input type="hidden" name="item_id" value="{{.ID}}">
-                    <button class="tiny-btn" type="submit">Remove</button>
-                  </form>
-                </td>
-              </tr>
-            {{else}}
-              <tr><td colspan="2">No selected items.</td></tr>
-            {{end}}
-            </tbody>
-          </table>
+          <div class="eligible-scroll">
+            <table>
+              <thead><tr><th>Image</th><th>Title</th><th>Category</th><th>Price</th><th>Discount</th><th></th></tr></thead>
+              <tbody>
+              {{range .SelectedItems}}
+                <tr>
+                  <td>
+                    <div class="thumb-wrap">
+                      {{if .HasThumbnail}}
+                      <img class="thumb-image" src="{{.ThumbnailURL}}" alt="{{.Title}} thumbnail">
+                      <img class="thumb-preview" src="{{.ThumbnailURL}}" alt="{{.Title}} preview">
+                      {{else}}
+                      <span class="thumb-placeholder">No image</span>
+                      {{end}}
+                    </div>
+                  </td>
+                  <td>{{.Title}}</td>
+                  <td>{{.Category}}</td>
+                  <td>{{money .Price}}</td>
+                  <td>{{discount .DiscountPct}}</td>
+                  <td>
+                    <form method="post" action="/admin/rails/{{$.RailID}}/items/remove">
+                      <input type="hidden" name="item_id" value="{{.ID}}">
+                      <button class="tiny-btn" type="submit">Remove</button>
+                    </form>
+                  </td>
+                </tr>
+              {{else}}
+                <tr><td colspan="6">No selected items.</td></tr>
+              {{end}}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </section>
