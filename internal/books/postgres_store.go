@@ -45,12 +45,13 @@ func (s *PostgresStore) List() ([]ListItem, error) {
 }
 
 func (s *PostgresStore) Create(input CreateInput) (Book, error) {
-	query := `INSERT INTO books (title, cover_image, cover_mime_type, supplier_id, category, format, condition, mrp, my_price, bundle_price, author, notes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id, title, supplier_id, cover_mime_type, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
+	query := `INSERT INTO books (title, cover_image, cover_mime_type, supplier_id, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id, title, supplier_id, cover_mime_type, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
 	row := s.db.QueryRowContext(context.Background(), query,
 		input.Title,
 		input.Cover.Data,
 		input.Cover.MimeType,
 		input.SupplierID,
+		input.IsBoxSet,
 		input.Category,
 		input.Format,
 		input.Condition,
@@ -65,7 +66,7 @@ func (s *PostgresStore) Create(input CreateInput) (Book, error) {
 }
 
 func (s *PostgresStore) Get(id int) (Book, error) {
-	query := `SELECT id, title, supplier_id, cover_mime_type, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at FROM books WHERE id = $1`
+	query := `SELECT id, title, supplier_id, cover_mime_type, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at FROM books WHERE id = $1`
 	row := s.db.QueryRowContext(context.Background(), query, id)
 	return scanBook(row)
 }
@@ -86,12 +87,13 @@ func (s *PostgresStore) GetCover(id int) (Cover, error) {
 
 func (s *PostgresStore) Update(id int, input UpdateInput) (Book, error) {
 	if input.Cover != nil {
-		query := `UPDATE books SET title = $1, cover_image = $2, cover_mime_type = $3, supplier_id = $4, category = $5, format = $6, condition = $7, mrp = $8, my_price = $9, bundle_price = $10, author = $11, notes = $12, in_stock = $13, updated_at = NOW() WHERE id = $14 RETURNING id, title, supplier_id, cover_mime_type, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
+		query := `UPDATE books SET title = $1, cover_image = $2, cover_mime_type = $3, supplier_id = $4, is_box_set = $5, category = $6, format = $7, condition = $8, mrp = $9, my_price = $10, bundle_price = $11, author = $12, notes = $13, in_stock = $14, updated_at = NOW() WHERE id = $15 RETURNING id, title, supplier_id, cover_mime_type, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
 		row := s.db.QueryRowContext(context.Background(), query,
 			input.Title,
 			input.Cover.Data,
 			input.Cover.MimeType,
 			input.SupplierID,
+			input.IsBoxSet,
 			input.Category,
 			input.Format,
 			input.Condition,
@@ -106,10 +108,11 @@ func (s *PostgresStore) Update(id int, input UpdateInput) (Book, error) {
 		return scanBook(row)
 	}
 
-	query := `UPDATE books SET title = $1, supplier_id = $2, category = $3, format = $4, condition = $5, mrp = $6, my_price = $7, bundle_price = $8, author = $9, notes = $10, in_stock = $11, updated_at = NOW() WHERE id = $12 RETURNING id, title, supplier_id, cover_mime_type, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
+	query := `UPDATE books SET title = $1, supplier_id = $2, is_box_set = $3, category = $4, format = $5, condition = $6, mrp = $7, my_price = $8, bundle_price = $9, author = $10, notes = $11, in_stock = $12, updated_at = NOW() WHERE id = $13 RETURNING id, title, supplier_id, cover_mime_type, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
 	row := s.db.QueryRowContext(context.Background(), query,
 		input.Title,
 		input.SupplierID,
+		input.IsBoxSet,
 		input.Category,
 		input.Format,
 		input.Condition,
@@ -125,13 +128,13 @@ func (s *PostgresStore) Update(id int, input UpdateInput) (Book, error) {
 }
 
 func (s *PostgresStore) SetInStock(id int, inStock bool) (Book, error) {
-	query := `UPDATE books SET in_stock = $1, updated_at = NOW() WHERE id = $2 RETURNING id, title, supplier_id, cover_mime_type, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
+	query := `UPDATE books SET in_stock = $1, updated_at = NOW() WHERE id = $2 RETURNING id, title, supplier_id, cover_mime_type, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
 	row := s.db.QueryRowContext(context.Background(), query, inStock, id)
 	return scanBook(row)
 }
 
 func (s *PostgresStore) Publish(id int) (Book, error) {
-	query := `UPDATE books SET is_published = TRUE, published_at = NOW(), updated_at = NOW() WHERE id = $1 AND in_stock = TRUE RETURNING id, title, supplier_id, cover_mime_type, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
+	query := `UPDATE books SET is_published = TRUE, published_at = NOW(), updated_at = NOW() WHERE id = $1 AND in_stock = TRUE RETURNING id, title, supplier_id, cover_mime_type, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
 	row := s.db.QueryRowContext(context.Background(), query, id)
 	book, err := scanBook(row)
 	if !errors.Is(err, ErrNotFound) {
@@ -152,7 +155,7 @@ func (s *PostgresStore) Publish(id int) (Book, error) {
 }
 
 func (s *PostgresStore) Unpublish(id int) (Book, error) {
-	query := `UPDATE books SET is_published = FALSE, unpublished_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING id, title, supplier_id, cover_mime_type, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
+	query := `UPDATE books SET is_published = FALSE, unpublished_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING id, title, supplier_id, cover_mime_type, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
 	row := s.db.QueryRowContext(context.Background(), query, id)
 	return scanBook(row)
 }
@@ -167,6 +170,7 @@ func scanBook(scanner interface{ Scan(dest ...any) error }) (Book, error) {
 		&book.Title,
 		&book.SupplierID,
 		&book.CoverMimeType,
+		&book.IsBoxSet,
 		&book.Category,
 		&book.Format,
 		&book.Condition,

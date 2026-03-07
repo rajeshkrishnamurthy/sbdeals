@@ -39,6 +39,7 @@ type BundleBook struct {
 	Title       string
 	Author      string
 	SupplierID  int
+	IsBoxSet    bool
 	Category    string
 	Condition   string
 	MRP         float64
@@ -53,6 +54,7 @@ type PickerBook struct {
 	Title       string
 	Author      string
 	SupplierID  int
+	IsBoxSet    bool
 	Category    string
 	Condition   string
 	MRP         float64

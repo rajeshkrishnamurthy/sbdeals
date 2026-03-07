@@ -96,14 +96,39 @@ func TestCreateBundleRequiresAtLeastTwoBooks(t *testing.T) {
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rr.Code)
 	}
-	if !strings.Contains(rr.Body.String(), "Bundle must include at least 2 books") {
+	if !strings.Contains(rr.Body.String(), "Minimum 2 items required unless one selected item is marked Box Set.") {
 		t.Fatalf("expected min books validation error")
 	}
 	if !strings.Contains(rr.Body.String(), `class="toast-error"`) {
 		t.Fatalf("expected toast error for validation failure")
 	}
-	if !strings.Contains(rr.Body.String(), "Please fix: Bundle must include at least 2 books.") {
+	if !strings.Contains(rr.Body.String(), "Please fix: Minimum 2 items required unless one selected item is marked Box Set.") {
 		t.Fatalf("expected toast summary text for validation failure")
+	}
+}
+
+func TestCreateBundleAllowsSingleBoxSetBook(t *testing.T) {
+	supplierStore, bundleStore := newBundleStores(t)
+	s := NewServerWithStores(supplierStore, books.NewMemoryStore(), bundleStore)
+
+	form := url.Values{}
+	form.Set("name", "Box Set Single")
+	form.Set("supplier_id", "1")
+	form.Set("category", "Fiction")
+	form.Add("allowed_conditions", "Very good")
+	form.Add("book_ids", "30")
+	form.Set("bundle_price", "300")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/bundles", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", rr.Code)
+	}
+	if !strings.HasPrefix(rr.Header().Get("Location"), "/admin/bundles?flash=") {
+		t.Fatalf("unexpected redirect: %s", rr.Header().Get("Location"))
 	}
 }
 
@@ -171,6 +196,9 @@ func TestBundleNewIncludesEnhancementScript(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "/assets/bundles-form.js") {
 		t.Fatalf("expected bundles form enhancement script tag")
+	}
+	if !strings.Contains(rr.Body.String(), "Minimum 2 items required unless one selected item is marked Box Set.") {
+		t.Fatalf("expected conditional minimum-items helper text")
 	}
 }
 
@@ -256,6 +284,7 @@ func newBundleStores(t *testing.T) (*suppliers.MemoryStore, *bundles.MemoryStore
 		{BookID: 10, Title: "Book A", Author: "Author A", SupplierID: first.ID, Category: "Fiction", Condition: "Very good", MRP: 400, MyPrice: 250, InStock: true},
 		{BookID: 11, Title: "Book B", Author: "Author B", SupplierID: first.ID, Category: "Fiction", Condition: "Good as new", MRP: 500, MyPrice: 300, InStock: true},
 		{BookID: 12, Title: "Book C", Author: "Author C", SupplierID: first.ID, Category: "Fiction", Condition: "Used", MRP: 350, MyPrice: 220, InStock: true},
+		{BookID: 30, Title: "Box Set A", Author: "Author Box", SupplierID: first.ID, IsBoxSet: true, Category: "Fiction", Condition: "Very good", MRP: 600, MyPrice: 350, InStock: true},
 		{BookID: 20, Title: "Book Z", Author: "Author Z", SupplierID: second.ID, Category: "Non-Fiction", Condition: "Very good", MRP: 280, MyPrice: 180, InStock: true},
 	}
 	return supplierStore, bundles.NewMemoryStore(supplierNames, pickerBooks)

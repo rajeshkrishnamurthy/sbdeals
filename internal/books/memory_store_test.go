@@ -13,6 +13,7 @@ func TestMemoryStoreCreateDefaultsInStockAndList(t *testing.T) {
 		Title:       "The Hobbit",
 		Cover:       Cover{Data: []byte("img-bytes"), MimeType: "image/jpeg"},
 		SupplierID:  11,
+		IsBoxSet:    true,
 		Category:    "Fiction",
 		Format:      "Paperback",
 		Condition:   "Very good",
@@ -36,6 +37,9 @@ func TestMemoryStoreCreateDefaultsInStockAndList(t *testing.T) {
 	}
 	if created.PublishedAt != nil {
 		t.Fatalf("expected created book PublishedAt=nil")
+	}
+	if !created.IsBoxSet {
+		t.Fatalf("expected created book IsBoxSet=true")
 	}
 	if created.UnpublishedAt == nil {
 		t.Fatalf("expected created book UnpublishedAt to be initialized")
@@ -129,6 +133,7 @@ func TestMemoryStoreGetCoverUpdateAndStockToggle(t *testing.T) {
 		Title:      "Dune Messiah",
 		Cover:      replacedCover,
 		SupplierID: 3,
+		IsBoxSet:   true,
 		Category:   "Fiction",
 		Format:     "Paperback",
 		Condition:  "Used",
@@ -143,6 +148,9 @@ func TestMemoryStoreGetCoverUpdateAndStockToggle(t *testing.T) {
 	}
 	if updated.Title != "Dune Messiah" || updated.SupplierID != 3 {
 		t.Fatalf("unexpected updated payload: %+v", updated)
+	}
+	if !updated.IsBoxSet {
+		t.Fatalf("expected updated IsBoxSet=true")
 	}
 	if updated.InStock {
 		t.Fatalf("expected updated in-stock false")

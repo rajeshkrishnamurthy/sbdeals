@@ -91,6 +91,7 @@ func TestCreateBookDefaultsInStockAndRedirects(t *testing.T) {
 		Fields: map[string]string{
 			"title":       "Deep Work",
 			"supplier_id": "1",
+			"is_box_set":  "yes",
 			"category":    "Non-Fiction",
 			"format":      "Paperback",
 			"condition":   "Good as new",
@@ -125,6 +126,63 @@ func TestCreateBookDefaultsInStockAndRedirects(t *testing.T) {
 	}
 	if !book.InStock {
 		t.Fatalf("expected created book InStock=true")
+	}
+	if !book.IsBoxSet {
+		t.Fatalf("expected created book IsBoxSet=true")
+	}
+}
+
+func TestBookEditCanUnsetBoxSet(t *testing.T) {
+	supplierStore := suppliers.NewMemoryStore()
+	_, err := supplierStore.Create(suppliers.Input{Name: "A1", WhatsApp: "+91-9", Location: "Bengaluru"})
+	if err != nil {
+		t.Fatalf("create supplier: %v", err)
+	}
+	bookStore := books.NewMemoryStore()
+	_, err = bookStore.Create(books.CreateInput{
+		Title:      "Boxed",
+		Cover:      books.Cover{Data: []byte("img"), MimeType: "image/png"},
+		SupplierID: 1,
+		IsBoxSet:   true,
+		Category:   "Fiction",
+		Format:     "Paperback",
+		Condition:  "Very good",
+		MRP:        100,
+		MyPrice:    90,
+	})
+	if err != nil {
+		t.Fatalf("create book: %v", err)
+	}
+
+	s := NewServer(supplierStore, bookStore)
+	editType, editBody := multipartBookForm(t, bookFormParts{
+		Fields: map[string]string{
+			"title":       "Boxed",
+			"supplier_id": "1",
+			"is_box_set":  "no",
+			"category":    "Fiction",
+			"format":      "Paperback",
+			"condition":   "Very good",
+			"mrp":         "100",
+			"my_price":    "90",
+			"in_stock":    "yes",
+		},
+	})
+
+	updateReq := httptest.NewRequest(http.MethodPost, "/admin/books/1", editBody)
+	updateReq.Header.Set("Content-Type", editType)
+	updateRR := httptest.NewRecorder()
+	s.Handler().ServeHTTP(updateRR, updateReq)
+
+	if updateRR.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 on edit, got %d", updateRR.Code)
+	}
+	updated, err := bookStore.Get(1)
+	if err != nil {
+		t.Fatalf("get updated: %v", err)
+	}
+	if updated.IsBoxSet {
+		t.Fatalf("expected IsBoxSet=false after edit")
 	}
 }
 

@@ -53,6 +53,7 @@ func (s *MemoryStore) Create(input CreateInput) (Book, error) {
 		Title:         input.Title,
 		SupplierID:    input.SupplierID,
 		CoverMimeType: input.Cover.MimeType,
+		IsBoxSet:      input.IsBoxSet,
 		Category:      input.Category,
 		Format:        input.Format,
 		Condition:     input.Condition,
@@ -106,6 +107,7 @@ func (s *MemoryStore) Update(id int, input UpdateInput) (Book, error) {
 	row := s.rows[idx]
 	row.book.Title = input.Title
 	row.book.SupplierID = input.SupplierID
+	row.book.IsBoxSet = input.IsBoxSet
 	row.book.Category = input.Category
 	row.book.Format = input.Format
 	row.book.Condition = input.Condition

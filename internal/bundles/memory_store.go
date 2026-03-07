@@ -157,6 +157,7 @@ func (s *MemoryStore) bundleFromInput(id int, input CreateInput) Bundle {
 				Title:       candidate.Title,
 				Author:      candidate.Author,
 				SupplierID:  candidate.SupplierID,
+				IsBoxSet:    candidate.IsBoxSet,
 				Category:    candidate.Category,
 				Condition:   candidate.Condition,
 				MRP:         candidate.MRP,

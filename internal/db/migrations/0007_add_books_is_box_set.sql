@@ -1,0 +1,6 @@
+ALTER TABLE books
+ADD COLUMN IF NOT EXISTS is_box_set BOOLEAN NOT NULL DEFAULT FALSE;
+
+UPDATE books
+SET is_box_set = FALSE
+WHERE is_box_set IS NULL;

@@ -8,6 +8,7 @@ type Book struct {
 	Title         string
 	SupplierID    int
 	CoverMimeType string
+	IsBoxSet      bool
 	Category      string
 	Format        string
 	Condition     string
@@ -47,6 +48,7 @@ type CreateInput struct {
 	Title       string
 	Cover       Cover
 	SupplierID  int
+	IsBoxSet    bool
 	Category    string
 	Format      string
 	Condition   string
@@ -62,6 +64,7 @@ type UpdateInput struct {
 	Title       string
 	Cover       *Cover
 	SupplierID  int
+	IsBoxSet    bool
 	Category    string
 	Format      string
 	Condition   string

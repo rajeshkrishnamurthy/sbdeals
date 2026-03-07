@@ -23,6 +23,7 @@ var (
 		"cover",
 		"title",
 		"supplier_id",
+		"is_box_set",
 		"category",
 		"format",
 		"condition",
@@ -61,7 +62,7 @@ func (s *Server) handleBookNew(w http.ResponseWriter, r *http.Request) {
 		Action:            "/admin/books",
 		SubmitLabel:       "Save Book",
 		ActiveSection:     "books",
-		Input:             bookFormInput{InStock: "yes"},
+		Input:             bookFormInput{InStock: "yes", IsBoxSet: "no"},
 		SupplierOptions:   suppliersList,
 		CategoryOptions:   bookCategoryOptions,
 		FormatOptions:     bookFormatOptions,
@@ -193,6 +194,7 @@ func (s *Server) createBook(w http.ResponseWriter, r *http.Request) {
 		Title:       parsed.Title,
 		Cover:       cover,
 		SupplierID:  parsed.SupplierID,
+		IsBoxSet:    parsed.IsBoxSet,
 		Category:    parsed.Category,
 		Format:      parsed.Format,
 		Condition:   parsed.Condition,
@@ -230,6 +232,7 @@ func (s *Server) renderBookDetail(w http.ResponseWriter, r *http.Request, bookID
 	input := bookFormInput{
 		Title:       book.Title,
 		SupplierID:  strconv.Itoa(book.SupplierID),
+		IsBoxSet:    boolToYesNo(book.IsBoxSet),
 		Category:    book.Category,
 		Format:      book.Format,
 		Condition:   book.Condition,
@@ -339,6 +342,7 @@ func (s *Server) updateBook(w http.ResponseWriter, r *http.Request, bookID int) 
 		Title:       parsed.Title,
 		Cover:       coverPtr,
 		SupplierID:  parsed.SupplierID,
+		IsBoxSet:    parsed.IsBoxSet,
 		Category:    parsed.Category,
 		Format:      parsed.Format,
 		Condition:   parsed.Condition,
@@ -480,6 +484,7 @@ func readBookFormInput(r *http.Request) bookFormInput {
 	return bookFormInput{
 		Title:       strings.TrimSpace(r.FormValue("title")),
 		SupplierID:  strings.TrimSpace(r.FormValue("supplier_id")),
+		IsBoxSet:    strings.TrimSpace(r.FormValue("is_box_set")),
 		Category:    strings.TrimSpace(r.FormValue("category")),
 		Format:      strings.TrimSpace(r.FormValue("format")),
 		Condition:   strings.TrimSpace(r.FormValue("condition")),
@@ -516,6 +521,7 @@ func readCoverFromRequest(r *http.Request) (books.Cover, bool, error) {
 type parsedBookForm struct {
 	Title       string
 	SupplierID  int
+	IsBoxSet    bool
 	Category    string
 	Format      string
 	Condition   string
@@ -543,6 +549,11 @@ func validateBookForm(input bookFormInput, suppliersList []suppliers.Supplier, r
 		errs["supplier_id"] = supplierErr
 	} else {
 		result.SupplierID = supplierID
+	}
+	if boxSetValue, ok := parseYesNo(input.IsBoxSet); ok {
+		result.IsBoxSet = boxSetValue
+	} else {
+		errs["is_box_set"] = "Please choose a valid Box Set value."
 	}
 
 	if errText := validateOption(input.Category, bookCategoryOptions, "Category is required.", "Please choose a valid category."); errText != "" {
@@ -641,6 +652,26 @@ func parseStockValue(value string) (bool, bool) {
 	}
 }
 
+func parseYesNo(value string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "":
+		return false, true
+	case "yes":
+		return true, true
+	case "no":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+func boolToYesNo(value bool) string {
+	if value {
+		return "yes"
+	}
+	return "no"
+}
+
 func boolToStockValue(inStock bool) string {
 	if inStock {
 		return "yes"
@@ -707,6 +738,7 @@ type bookSummaryViewModel struct {
 type bookFormInput struct {
 	Title       string
 	SupplierID  string
+	IsBoxSet    string
 	Category    string
 	Format      string
 	Condition   string
@@ -1022,6 +1054,15 @@ var booksFormTemplate = template.Must(template.New("books-form").Funcs(template.
           {{end}}
         </select>
         {{if .HasError "supplier_id"}}<div class="error">{{.Error "supplier_id"}}</div>{{end}}
+      </div>
+
+      <div class="field">
+        <label for="is_box_set">Box Set</label>
+        <select id="is_box_set" name="is_box_set" required>
+          <option value="no" {{if eq .Input.IsBoxSet "no"}}selected{{end}}>No</option>
+          <option value="yes" {{if eq .Input.IsBoxSet "yes"}}selected{{end}}>Yes</option>
+        </select>
+        {{if .HasError "is_box_set"}}<div class="error">{{.Error "is_box_set"}}</div>{{end}}
       </div>
 
       <div class="field">

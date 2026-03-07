@@ -178,7 +178,7 @@ func (s *PostgresStore) Unpublish(id int) (Bundle, error) {
 }
 
 func (s *PostgresStore) ListBooksForPicker() ([]PickerBook, error) {
-	query := `SELECT id, title, author, supplier_id, category, condition, mrp, my_price, bundle_price, in_stock FROM books ORDER BY id ASC`
+	query := `SELECT id, title, author, supplier_id, is_box_set, category, condition, mrp, my_price, bundle_price, in_stock FROM books ORDER BY id ASC`
 	rows, err := s.db.QueryContext(context.Background(), query)
 	if err != nil {
 		return nil, err
@@ -189,7 +189,7 @@ func (s *PostgresStore) ListBooksForPicker() ([]PickerBook, error) {
 	for rows.Next() {
 		var item PickerBook
 		var bundlePrice sql.NullFloat64
-		if err := rows.Scan(&item.BookID, &item.Title, &item.Author, &item.SupplierID, &item.Category, &item.Condition, &item.MRP, &item.MyPrice, &bundlePrice, &item.InStock); err != nil {
+		if err := rows.Scan(&item.BookID, &item.Title, &item.Author, &item.SupplierID, &item.IsBoxSet, &item.Category, &item.Condition, &item.MRP, &item.MyPrice, &bundlePrice, &item.InStock); err != nil {
 			return nil, err
 		}
 		if bundlePrice.Valid {
@@ -228,7 +228,7 @@ func queryBundleByID(ctx context.Context, db queryRowContextExecutor, id int) (B
 }
 
 func queryBundleBooks(ctx context.Context, db queryContextExecutor, bundleID int) ([]BundleBook, []int, error) {
-	query := `SELECT bb.book_id, b.title, b.author, b.supplier_id, b.category, b.condition, b.mrp, b.my_price, b.bundle_price, b.in_stock FROM bundle_books bb JOIN books b ON b.id = bb.book_id WHERE bb.bundle_id = $1 ORDER BY bb.position ASC`
+	query := `SELECT bb.book_id, b.title, b.author, b.supplier_id, b.is_box_set, b.category, b.condition, b.mrp, b.my_price, b.bundle_price, b.in_stock FROM bundle_books bb JOIN books b ON b.id = bb.book_id WHERE bb.bundle_id = $1 ORDER BY bb.position ASC`
 	rows, err := db.QueryContext(ctx, query, bundleID)
 	if err != nil {
 		return nil, nil, err
@@ -240,7 +240,7 @@ func queryBundleBooks(ctx context.Context, db queryContextExecutor, bundleID int
 	for rows.Next() {
 		var item BundleBook
 		var bundlePrice sql.NullFloat64
-		if err := rows.Scan(&item.BookID, &item.Title, &item.Author, &item.SupplierID, &item.Category, &item.Condition, &item.MRP, &item.MyPrice, &bundlePrice, &item.InStock); err != nil {
+		if err := rows.Scan(&item.BookID, &item.Title, &item.Author, &item.SupplierID, &item.IsBoxSet, &item.Category, &item.Condition, &item.MRP, &item.MyPrice, &bundlePrice, &item.InStock); err != nil {
 			return nil, nil, err
 		}
 		if bundlePrice.Valid {

@@ -52,6 +52,7 @@ func TestPostgresStoreCreateAndGet(t *testing.T) {
 		Title:       "Dune",
 		Cover:       Cover{Data: []byte("img"), MimeType: "image/jpeg"},
 		SupplierID:  5,
+		IsBoxSet:    true,
 		Category:    "Fiction",
 		Format:      "Paperback",
 		Condition:   "Very good",
@@ -62,17 +63,17 @@ func TestPostgresStoreCreateAndGet(t *testing.T) {
 		Notes:       "Sci-fi",
 	}
 
-	createQuery := `INSERT INTO books (title, cover_image, cover_mime_type, supplier_id, category, format, condition, mrp, my_price, bundle_price, author, notes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id, title, supplier_id, cover_mime_type, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
+	createQuery := `INSERT INTO books (title, cover_image, cover_mime_type, supplier_id, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id, title, supplier_id, cover_mime_type, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
 	mock.ExpectQuery(regexp.QuoteMeta(createQuery)).
-		WithArgs(input.Title, input.Cover.Data, input.Cover.MimeType, input.SupplierID, input.Category, input.Format, input.Condition, input.MRP, input.MyPrice, input.BundlePrice, input.Author, input.Notes).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "title", "supplier_id", "cover_mime_type", "category", "format", "condition", "mrp", "my_price", "bundle_price", "author", "notes", "in_stock", "is_published", "published_at", "unpublished_at"}).
-			AddRow(7, input.Title, input.SupplierID, input.Cover.MimeType, input.Category, input.Format, input.Condition, input.MRP, input.MyPrice, bundlePrice, input.Author, input.Notes, true, false, nil, time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC)))
+		WithArgs(input.Title, input.Cover.Data, input.Cover.MimeType, input.SupplierID, input.IsBoxSet, input.Category, input.Format, input.Condition, input.MRP, input.MyPrice, input.BundlePrice, input.Author, input.Notes).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "title", "supplier_id", "cover_mime_type", "is_box_set", "category", "format", "condition", "mrp", "my_price", "bundle_price", "author", "notes", "in_stock", "is_published", "published_at", "unpublished_at"}).
+			AddRow(7, input.Title, input.SupplierID, input.Cover.MimeType, input.IsBoxSet, input.Category, input.Format, input.Condition, input.MRP, input.MyPrice, bundlePrice, input.Author, input.Notes, true, false, nil, time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC)))
 
-	getQuery := `SELECT id, title, supplier_id, cover_mime_type, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at FROM books WHERE id = $1`
+	getQuery := `SELECT id, title, supplier_id, cover_mime_type, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at FROM books WHERE id = $1`
 	mock.ExpectQuery(regexp.QuoteMeta(getQuery)).
 		WithArgs(7).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "title", "supplier_id", "cover_mime_type", "category", "format", "condition", "mrp", "my_price", "bundle_price", "author", "notes", "in_stock", "is_published", "published_at", "unpublished_at"}).
-			AddRow(7, input.Title, input.SupplierID, input.Cover.MimeType, input.Category, input.Format, input.Condition, input.MRP, input.MyPrice, bundlePrice, input.Author, input.Notes, true, false, nil, time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC)))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "title", "supplier_id", "cover_mime_type", "is_box_set", "category", "format", "condition", "mrp", "my_price", "bundle_price", "author", "notes", "in_stock", "is_published", "published_at", "unpublished_at"}).
+			AddRow(7, input.Title, input.SupplierID, input.Cover.MimeType, input.IsBoxSet, input.Category, input.Format, input.Condition, input.MRP, input.MyPrice, bundlePrice, input.Author, input.Notes, true, false, nil, time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC)))
 
 	store := NewPostgresStore(db)
 	created, err := store.Create(input)
@@ -107,11 +108,11 @@ func TestPostgresStoreGetCoverAndSetInStock(t *testing.T) {
 		WithArgs(10).
 		WillReturnRows(sqlmock.NewRows([]string{"cover_image", "cover_mime_type"}).AddRow([]byte("cover-bytes"), "image/png"))
 
-	setStockQuery := `UPDATE books SET in_stock = $1, updated_at = NOW() WHERE id = $2 RETURNING id, title, supplier_id, cover_mime_type, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
+	setStockQuery := `UPDATE books SET in_stock = $1, updated_at = NOW() WHERE id = $2 RETURNING id, title, supplier_id, cover_mime_type, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
 	mock.ExpectQuery(regexp.QuoteMeta(setStockQuery)).
 		WithArgs(false, 10).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "title", "supplier_id", "cover_mime_type", "category", "format", "condition", "mrp", "my_price", "bundle_price", "author", "notes", "in_stock", "is_published", "published_at", "unpublished_at"}).
-			AddRow(10, "Book", 1, "image/png", "Fiction", "Paperback", "Used", 100.0, 90.0, nil, "", "", false, false, nil, time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC)))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "title", "supplier_id", "cover_mime_type", "is_box_set", "category", "format", "condition", "mrp", "my_price", "bundle_price", "author", "notes", "in_stock", "is_published", "published_at", "unpublished_at"}).
+			AddRow(10, "Book", 1, "image/png", false, "Fiction", "Paperback", "Used", 100.0, 90.0, nil, "", "", false, false, nil, time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC)))
 
 	store := NewPostgresStore(db)
 	cover, err := store.GetCover(10)
@@ -146,6 +147,7 @@ func TestPostgresStoreUpdateWithoutCoverAndNotFound(t *testing.T) {
 	input := UpdateInput{
 		Title:       "Updated",
 		SupplierID:  3,
+		IsBoxSet:    false,
 		Category:    "Non-Fiction",
 		Format:      "Hardcover",
 		Condition:   "Good as new",
@@ -157,9 +159,9 @@ func TestPostgresStoreUpdateWithoutCoverAndNotFound(t *testing.T) {
 		InStock:     true,
 	}
 
-	updateQuery := `UPDATE books SET title = $1, supplier_id = $2, category = $3, format = $4, condition = $5, mrp = $6, my_price = $7, bundle_price = $8, author = $9, notes = $10, in_stock = $11, updated_at = NOW() WHERE id = $12 RETURNING id, title, supplier_id, cover_mime_type, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
+	updateQuery := `UPDATE books SET title = $1, supplier_id = $2, is_box_set = $3, category = $4, format = $5, condition = $6, mrp = $7, my_price = $8, bundle_price = $9, author = $10, notes = $11, in_stock = $12, updated_at = NOW() WHERE id = $13 RETURNING id, title, supplier_id, cover_mime_type, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
 	mock.ExpectQuery(regexp.QuoteMeta(updateQuery)).
-		WithArgs(input.Title, input.SupplierID, input.Category, input.Format, input.Condition, input.MRP, input.MyPrice, input.BundlePrice, input.Author, input.Notes, input.InStock, 404).
+		WithArgs(input.Title, input.SupplierID, input.IsBoxSet, input.Category, input.Format, input.Condition, input.MRP, input.MyPrice, input.BundlePrice, input.Author, input.Notes, input.InStock, 404).
 		WillReturnError(sql.ErrNoRows)
 
 	store := NewPostgresStore(db)
@@ -186,6 +188,7 @@ func TestPostgresStoreUpdateWithCoverPath(t *testing.T) {
 		Title:       "Updated With Cover",
 		Cover:       cover,
 		SupplierID:  3,
+		IsBoxSet:    true,
 		Category:    "Fiction",
 		Format:      "Paperback",
 		Condition:   "Gently used",
@@ -197,13 +200,14 @@ func TestPostgresStoreUpdateWithCoverPath(t *testing.T) {
 		InStock:     false,
 	}
 
-	updateWithCoverQuery := `UPDATE books SET title = $1, cover_image = $2, cover_mime_type = $3, supplier_id = $4, category = $5, format = $6, condition = $7, mrp = $8, my_price = $9, bundle_price = $10, author = $11, notes = $12, in_stock = $13, updated_at = NOW() WHERE id = $14 RETURNING id, title, supplier_id, cover_mime_type, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
+	updateWithCoverQuery := `UPDATE books SET title = $1, cover_image = $2, cover_mime_type = $3, supplier_id = $4, is_box_set = $5, category = $6, format = $7, condition = $8, mrp = $9, my_price = $10, bundle_price = $11, author = $12, notes = $13, in_stock = $14, updated_at = NOW() WHERE id = $15 RETURNING id, title, supplier_id, cover_mime_type, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
 	mock.ExpectQuery(regexp.QuoteMeta(updateWithCoverQuery)).
 		WithArgs(
 			input.Title,
 			input.Cover.Data,
 			input.Cover.MimeType,
 			input.SupplierID,
+			input.IsBoxSet,
 			input.Category,
 			input.Format,
 			input.Condition,
@@ -215,8 +219,8 @@ func TestPostgresStoreUpdateWithCoverPath(t *testing.T) {
 			input.InStock,
 			12,
 		).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "title", "supplier_id", "cover_mime_type", "category", "format", "condition", "mrp", "my_price", "bundle_price", "author", "notes", "in_stock", "is_published", "published_at", "unpublished_at"}).
-			AddRow(12, input.Title, input.SupplierID, input.Cover.MimeType, input.Category, input.Format, input.Condition, input.MRP, input.MyPrice, bundlePrice, input.Author, input.Notes, input.InStock, false, nil, time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC)))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "title", "supplier_id", "cover_mime_type", "is_box_set", "category", "format", "condition", "mrp", "my_price", "bundle_price", "author", "notes", "in_stock", "is_published", "published_at", "unpublished_at"}).
+			AddRow(12, input.Title, input.SupplierID, input.Cover.MimeType, input.IsBoxSet, input.Category, input.Format, input.Condition, input.MRP, input.MyPrice, bundlePrice, input.Author, input.Notes, input.InStock, false, nil, time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC)))
 
 	store := NewPostgresStore(db)
 	updated, err := store.Update(12, input)
@@ -245,28 +249,28 @@ func TestPostgresStorePublishUnpublishAndOutOfStockRule(t *testing.T) {
 	}
 	defer db.Close()
 
-	publishQuery := `UPDATE books SET is_published = TRUE, published_at = NOW(), updated_at = NOW() WHERE id = $1 AND in_stock = TRUE RETURNING id, title, supplier_id, cover_mime_type, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
-	unpublishQuery := `UPDATE books SET is_published = FALSE, unpublished_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING id, title, supplier_id, cover_mime_type, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
-	getQuery := `SELECT id, title, supplier_id, cover_mime_type, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at FROM books WHERE id = $1`
+	publishQuery := `UPDATE books SET is_published = TRUE, published_at = NOW(), updated_at = NOW() WHERE id = $1 AND in_stock = TRUE RETURNING id, title, supplier_id, cover_mime_type, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
+	unpublishQuery := `UPDATE books SET is_published = FALSE, unpublished_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING id, title, supplier_id, cover_mime_type, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
+	getQuery := `SELECT id, title, supplier_id, cover_mime_type, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at FROM books WHERE id = $1`
 
 	now := time.Date(2026, time.March, 7, 12, 0, 0, 0, time.UTC)
 	mock.ExpectQuery(regexp.QuoteMeta(publishQuery)).
 		WithArgs(1).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "title", "supplier_id", "cover_mime_type", "category", "format", "condition", "mrp", "my_price", "bundle_price", "author", "notes", "in_stock", "is_published", "published_at", "unpublished_at"}).
-			AddRow(1, "Book", 1, "image/png", "Fiction", "Paperback", "Used", 100.0, 90.0, nil, "", "", true, true, now, now))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "title", "supplier_id", "cover_mime_type", "is_box_set", "category", "format", "condition", "mrp", "my_price", "bundle_price", "author", "notes", "in_stock", "is_published", "published_at", "unpublished_at"}).
+			AddRow(1, "Book", 1, "image/png", false, "Fiction", "Paperback", "Used", 100.0, 90.0, nil, "", "", true, true, now, now))
 
 	mock.ExpectQuery(regexp.QuoteMeta(unpublishQuery)).
 		WithArgs(1).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "title", "supplier_id", "cover_mime_type", "category", "format", "condition", "mrp", "my_price", "bundle_price", "author", "notes", "in_stock", "is_published", "published_at", "unpublished_at"}).
-			AddRow(1, "Book", 1, "image/png", "Fiction", "Paperback", "Used", 100.0, 90.0, nil, "", "", true, false, now, now))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "title", "supplier_id", "cover_mime_type", "is_box_set", "category", "format", "condition", "mrp", "my_price", "bundle_price", "author", "notes", "in_stock", "is_published", "published_at", "unpublished_at"}).
+			AddRow(1, "Book", 1, "image/png", false, "Fiction", "Paperback", "Used", 100.0, 90.0, nil, "", "", true, false, now, now))
 
 	mock.ExpectQuery(regexp.QuoteMeta(publishQuery)).
 		WithArgs(2).
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery(regexp.QuoteMeta(getQuery)).
 		WithArgs(2).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "title", "supplier_id", "cover_mime_type", "category", "format", "condition", "mrp", "my_price", "bundle_price", "author", "notes", "in_stock", "is_published", "published_at", "unpublished_at"}).
-			AddRow(2, "Book2", 1, "image/png", "Fiction", "Paperback", "Used", 100.0, 90.0, nil, "", "", false, false, nil, now))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "title", "supplier_id", "cover_mime_type", "is_box_set", "category", "format", "condition", "mrp", "my_price", "bundle_price", "author", "notes", "in_stock", "is_published", "published_at", "unpublished_at"}).
+			AddRow(2, "Book2", 1, "image/png", false, "Fiction", "Paperback", "Used", 100.0, 90.0, nil, "", "", false, false, nil, now))
 
 	store := NewPostgresStore(db)
 	published, err := store.Publish(1)

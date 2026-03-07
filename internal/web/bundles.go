@@ -414,8 +414,8 @@ func validateBundleFormInput(input bundleFormInput, suppliersList []suppliers.Su
 		result.BookIDs = bookIDs
 	}
 
-	if len(result.BookIDs) < 2 {
-		errorsByField["book_ids"] = "Bundle must include at least 2 books."
+	if !hasMinimumBundleItems(selectedBooks) {
+		errorsByField["book_ids"] = "Minimum 2 items required unless one selected item is marked Box Set."
 	}
 
 	bundlePricePtr, priceErr := parseNonNegativeNumber(input.BundlePrice, true)
@@ -513,6 +513,16 @@ func selectedBooksMatchFilters(selected []bundles.PickerBook, supplierID int, ca
 	return true
 }
 
+func hasMinimumBundleItems(selected []bundles.PickerBook) bool {
+	if len(selected) >= 2 {
+		return true
+	}
+	if len(selected) != 1 {
+		return false
+	}
+	return selected[0].IsBoxSet
+}
+
 func trimAndCompact(values []string) []string {
 	out := make([]string, 0, len(values))
 	for _, value := range values {
@@ -541,6 +551,7 @@ func toPickerBooksFromBundle(bundleBooks []bundles.BundleBook) []bundles.PickerB
 			Title:       book.Title,
 			Author:      book.Author,
 			SupplierID:  book.SupplierID,
+			IsBoxSet:    book.IsBoxSet,
 			Category:    book.Category,
 			Condition:   book.Condition,
 			MRP:         book.MRP,
@@ -969,6 +980,7 @@ var bundleFormTemplate = template.Must(template.New("bundle-form").Funcs(templat
 
       <div class="step">
         <h2>Step 4: Add Books to Bundle</h2>
+        <p>Minimum 2 items required unless one selected item is marked Box Set.</p>
         <div class="field">
           <label for="bundle-book-search">Search eligible books (title/author)</label>
           <input id="bundle-book-search" placeholder="Search title or author">
