@@ -1,7 +1,10 @@
 # SBD — Sprint 1 Feature Sequence (locked)
 
 ## Goal
-Deliver a usable public catalog (in-stock only) backed by admin management for suppliers, books, and bundles.
+Finish Sprint 1 as **admin foundations + merchandising controls** (no customer catalog UI):
+- Admin CRUD for suppliers/books/bundles
+- **Publish/unpublish** controls
+- **Rail curation** (which items appear in which rail + ordering)
 
 ## Feature order (implement in this sequence)
 1) **Admin: Suppliers (minimal)**
@@ -12,18 +15,24 @@ Deliver a usable public catalog (in-stock only) backed by admin management for s
    - Cover image mandatory (per Feature 02 spec)
    - MVP rule: **In-stock = Yes** by default on create; admin can toggle Yes/No
 
-3) **Public: Catalog list (in-stock only)** — **DEFERRED** (positioning shift: curated deals approach; customer-facing catalog to a future sprint)
-
-4) **Public: Book detail page** — **DEFERRED** (to be tackled alongside curated deals catalog work)
-
-5) **Admin: Bundle create/edit**
+3) **Admin: Bundle create/edit**
    - Enforce single-supplier bundles (only books from the chosen supplier)
    - Explicit bundle price with default suggestion
 
-6) **Bundle validity + Admin: Invalid Bundles section (basic)**
-   - Bundle becomes invalid if any included book is out of stock
-   - Invalid bundles not shown in public catalog
-   - Admin list to review invalid bundles
+4) **Admin: Publish/unpublish**
+   - Bundles: Draft/Published (or `isPublished`) toggle
+   - Optional: Books Draft/Published toggle (only if needed for mixed rails)
+
+5) **Admin: Rails (curation + ordering)**
+   - Create/edit rails (title + order)
+   - Assign bundles/books into rails + order items within rail
+
+## Explicitly out of scope (moved to Sprint 1a)
+- Public catalog list/grid/rails pages
+- Book detail / bundle detail pages
+- Hover/zoom card interactions
+- Any customer-facing presentation/SEO
 
 ## Notes
 - Keep spec/business-level focus; Codex will be fed one feature at a time.
+- Bundle invalidation + Invalid Bundles admin is moved out of Sprint 1 and tracked in `spec/BACKLOG.md` for later stock-management phases.
