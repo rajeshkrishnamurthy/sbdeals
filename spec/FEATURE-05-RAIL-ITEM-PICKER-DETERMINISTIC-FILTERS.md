@@ -38,16 +38,25 @@ Validation:
   - Fixed-height container
   - Internal scroll
 
-### 6) Bundle row display
-Each bundle row should show:
+### 6) Result row display by item type
+Display fields should be context-aware:
+
+#### Bundle rows
+Show:
 - Thumbnail image
 - Title
 - Category
 - Bundle price
 - Discount %
 
+#### Book rows
+Show:
+- Thumbnail image (book cover)
+- Title
+- Category
+
 Image interaction:
-- On mouse hover over thumbnail, show a simple enlarged preview.
+- On mouse hover over thumbnail, show a simple enlarged preview (applies to both books and bundles).
 
 ### 7) Already-added items
 - Items already present in the current rail must be excluded from picker results.
@@ -85,7 +94,9 @@ Image interaction:
 3. Apply Filters is explicit (no live filtering).
 4. Reset Filters resets filter state and results.
 5. Invalid range (`min > max`) blocks apply and shows inline error.
-6. Bundle rows display thumbnail, title, category, price, discount.
+6. Result rows are context-aware:
+   - Bundle rows display thumbnail, title, category, price, discount.
+   - Book rows display thumbnail, title, category.
 7. Thumbnail hover shows enlarged preview.
 8. Already-added rail items do not appear in results.
 9. Result panel uses fixed-height internal-scroll pattern consistent with bundle-book selector.
@@ -100,5 +111,7 @@ Image interaction:
 - Discount `min > max` shows error and blocks apply.
 - Reset clears all fields and resets list.
 - Already-selected rail item is absent in picker.
+- In bundle context, row shows thumb/title/category/price/discount.
+- In book context, row shows thumb/title/category (no bundle price/discount columns).
 - Hover preview appears/disappears correctly.
 - Admin Note persists across create/edit and enforces max length.
