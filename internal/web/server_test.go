@@ -214,6 +214,9 @@ func assertAdminNav(t *testing.T, body string, activePath string) {
 	if !strings.Contains(body, `href="/admin/bundles"`) {
 		t.Fatalf("expected bundles link in admin nav")
 	}
+	if !strings.Contains(body, `href="/admin/rails"`) {
+		t.Fatalf("expected rails link in admin nav")
+	}
 	activeMarkup := `href="` + activePath + `" class="admin-nav-link active"`
 	if !strings.Contains(body, activeMarkup) {
 		t.Fatalf("expected active nav link %q", activePath)

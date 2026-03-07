@@ -41,6 +41,7 @@ func TestAdminListPagesUseSameContainerWidthAndFullTableWidth(t *testing.T) {
 	suppliersBody := fetchBody(t, s, "/admin/suppliers")
 	booksBody := fetchBody(t, s, "/admin/books")
 	bundlesBody := fetchBody(t, s, "/admin/bundles")
+	railsBody := fetchBody(t, s, "/admin/rails")
 
 	const layoutToken = `.shell { width:min(1100px, 94vw); margin:0 auto; padding:16px; }`
 	if !strings.Contains(suppliersBody, layoutToken) {
@@ -52,6 +53,9 @@ func TestAdminListPagesUseSameContainerWidthAndFullTableWidth(t *testing.T) {
 	if !strings.Contains(bundlesBody, layoutToken) {
 		t.Fatalf("expected bundles page to include standardized shell width token")
 	}
+	if !strings.Contains(railsBody, layoutToken) {
+		t.Fatalf("expected rails page to include standardized shell width token")
+	}
 
 	const tableToken = `table { width:100%;`
 	if !strings.Contains(suppliersBody, tableToken) {
@@ -62,6 +66,9 @@ func TestAdminListPagesUseSameContainerWidthAndFullTableWidth(t *testing.T) {
 	}
 	if !strings.Contains(bundlesBody, tableToken) {
 		t.Fatalf("expected bundles page table width to be 100%%")
+	}
+	if !strings.Contains(railsBody, tableToken) {
+		t.Fatalf("expected rails page table width to be 100%%")
 	}
 }
 

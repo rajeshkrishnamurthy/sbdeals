@@ -11,6 +11,7 @@ import (
 
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/books"
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/bundles"
+	"github.com/rajeshkrishnamurthy/sbdeals/internal/rails"
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/suppliers"
 )
 
@@ -27,6 +28,7 @@ type Server struct {
 	store       suppliers.Store
 	bookStore   books.Store
 	bundleStore bundles.Store
+	railStore   rails.Store
 	locations   []string
 	mux         *http.ServeMux
 }
@@ -37,14 +39,21 @@ func NewServer(store suppliers.Store, bookStores ...books.Store) *Server {
 		bookStore = bookStores[0]
 	}
 	bundleStore := bundles.Store(bundles.NewMemoryStore(nil, nil))
-	return NewServerWithStores(store, bookStore, bundleStore)
+	railStore := rails.Store(rails.NewMemoryStore())
+	return NewServerWithStores(store, bookStore, bundleStore, railStore)
 }
 
-func NewServerWithStores(store suppliers.Store, bookStore books.Store, bundleStore bundles.Store) *Server {
+func NewServerWithStores(store suppliers.Store, bookStore books.Store, bundleStore bundles.Store, railStores ...rails.Store) *Server {
+	railStore := rails.Store(rails.NewMemoryStore())
+	if len(railStores) > 0 && railStores[0] != nil {
+		railStore = railStores[0]
+	}
+
 	s := &Server{
 		store:       store,
 		bookStore:   bookStore,
 		bundleStore: bundleStore,
+		railStore:   railStore,
 		locations:   append([]string(nil), defaultLocations...),
 		mux:         http.NewServeMux(),
 	}
@@ -59,8 +68,12 @@ func NewServerWithStores(store suppliers.Store, bookStore books.Store, bundleSto
 	s.mux.HandleFunc("/admin/bundles", s.handleBundlesCollection)
 	s.mux.HandleFunc("/admin/bundles/new", s.handleBundleNew)
 	s.mux.HandleFunc("/admin/bundles/", s.handleBundleItem)
+	s.mux.HandleFunc("/admin/rails", s.handleRailsCollection)
+	s.mux.HandleFunc("/admin/rails/new", s.handleRailNew)
+	s.mux.HandleFunc("/admin/rails/", s.handleRailItem)
 	s.mux.HandleFunc("/assets/books-form.js", s.handleBooksFormJSAsset)
 	s.mux.HandleFunc("/assets/bundles-form.js", s.handleBundlesFormJSAsset)
+	s.mux.HandleFunc("/assets/rails-form.js", s.handleRailsFormJSAsset)
 
 	return s
 }
