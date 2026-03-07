@@ -20,7 +20,7 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 }
 
 func (s *PostgresStore) List() ([]ListItem, error) {
-	query := `SELECT b.id, b.name, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, COUNT(bb.book_id) AS book_count, b.is_published, b.published_at, b.unpublished_at FROM bundles b JOIN suppliers s ON s.id = b.supplier_id LEFT JOIN bundle_books bb ON bb.bundle_id = b.id GROUP BY b.id, b.name, s.name, b.category, b.allowed_conditions, b.bundle_price, b.is_published, b.published_at, b.unpublished_at ORDER BY b.id ASC`
+	query := `SELECT b.id, b.name, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, COUNT(bb.book_id) AS book_count, COALESCE(SUM(bk.mrp), 0) AS bundle_mrp, OCTET_LENGTH(b.bundle_image) > 0 AS has_image, b.is_published, b.published_at, b.unpublished_at FROM bundles b JOIN suppliers s ON s.id = b.supplier_id LEFT JOIN bundle_books bb ON bb.bundle_id = b.id LEFT JOIN books bk ON bk.id = bb.book_id GROUP BY b.id, b.name, s.name, b.category, b.allowed_conditions, b.bundle_price, b.bundle_image, b.is_published, b.published_at, b.unpublished_at ORDER BY b.id ASC`
 	rows, err := s.db.QueryContext(context.Background(), query)
 	if err != nil {
 		return nil, err
@@ -33,7 +33,7 @@ func (s *PostgresStore) List() ([]ListItem, error) {
 		var allowedConditions string
 		var publishedAt sql.NullTime
 		var unpublishedAt sql.NullTime
-		if err := rows.Scan(&item.ID, &item.Name, &item.SupplierName, &item.Category, &allowedConditions, &item.BundlePrice, &item.BookCount, &item.IsPublished, &publishedAt, &unpublishedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.SupplierName, &item.Category, &allowedConditions, &item.BundlePrice, &item.BookCount, &item.BundleMRP, &item.HasImage, &item.IsPublished, &publishedAt, &unpublishedAt); err != nil {
 			return nil, err
 		}
 		item.AllowedConditions = splitConditions(allowedConditions)
@@ -58,10 +58,10 @@ func (s *PostgresStore) Create(input CreateInput) (Bundle, error) {
 		return Bundle{}, err
 	}
 
-	insertBundle := `INSERT INTO bundles (name, supplier_id, category, allowed_conditions, bundle_price, notes) VALUES ($1, $2, $3, string_to_array($4, '||'), $5, $6) RETURNING id`
+	insertBundle := `INSERT INTO bundles (name, supplier_id, category, allowed_conditions, bundle_price, notes, bundle_image, bundle_image_mime_type) VALUES ($1, $2, $3, string_to_array($4, '||'), $5, $6, $7, $8) RETURNING id`
 	conditions := joinConditions(input.AllowedConditions)
 	var bundleID int
-	if err := tx.QueryRowContext(ctx, insertBundle, input.Name, input.SupplierID, input.Category, conditions, input.BundlePrice, input.Notes).Scan(&bundleID); err != nil {
+	if err := tx.QueryRowContext(ctx, insertBundle, input.Name, input.SupplierID, input.Category, conditions, input.BundlePrice, input.Notes, input.Image.Data, input.Image.MimeType).Scan(&bundleID); err != nil {
 		_ = tx.Rollback()
 		return Bundle{}, err
 	}
@@ -101,8 +101,12 @@ func (s *PostgresStore) Update(id int, input UpdateInput) (Bundle, error) {
 	}
 
 	updateQuery := `UPDATE bundles SET name = $1, supplier_id = $2, category = $3, allowed_conditions = string_to_array($4, '||'), bundle_price = $5, notes = $6, updated_at = NOW() WHERE id = $7`
-	conditions := joinConditions(input.AllowedConditions)
-	res, err := tx.ExecContext(ctx, updateQuery, input.Name, input.SupplierID, input.Category, conditions, input.BundlePrice, input.Notes, id)
+	args := []any{input.Name, input.SupplierID, input.Category, joinConditions(input.AllowedConditions), input.BundlePrice, input.Notes, id}
+	if input.Image != nil {
+		updateQuery = `UPDATE bundles SET name = $1, supplier_id = $2, category = $3, allowed_conditions = string_to_array($4, '||'), bundle_price = $5, notes = $6, bundle_image = $7, bundle_image_mime_type = $8, updated_at = NOW() WHERE id = $9`
+		args = []any{input.Name, input.SupplierID, input.Category, joinConditions(input.AllowedConditions), input.BundlePrice, input.Notes, input.Image.Data, input.Image.MimeType, id}
+	}
+	res, err := tx.ExecContext(ctx, updateQuery, args...)
 	if err != nil {
 		_ = tx.Rollback()
 		return Bundle{}, err
@@ -203,15 +207,31 @@ func (s *PostgresStore) ListBooksForPicker() ([]PickerBook, error) {
 	return items, nil
 }
 
+func (s *PostgresStore) GetImage(id int) (Image, error) {
+	query := `SELECT bundle_image, bundle_image_mime_type FROM bundles WHERE id = $1`
+	row := s.db.QueryRowContext(context.Background(), query, id)
+	var image Image
+	if err := row.Scan(&image.Data, &image.MimeType); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Image{}, ErrNotFound
+		}
+		return Image{}, err
+	}
+	if len(image.Data) == 0 {
+		return Image{}, ErrNotFound
+	}
+	return image, nil
+}
+
 func queryBundleByID(ctx context.Context, db queryRowContextExecutor, id int) (Bundle, error) {
-	query := `SELECT b.id, b.name, b.supplier_id, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, b.notes, b.is_published, b.published_at, b.unpublished_at FROM bundles b JOIN suppliers s ON s.id = b.supplier_id WHERE b.id = $1`
+	query := `SELECT b.id, b.name, b.supplier_id, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, b.notes, b.bundle_image_mime_type, b.is_published, b.published_at, b.unpublished_at FROM bundles b JOIN suppliers s ON s.id = b.supplier_id WHERE b.id = $1`
 	row := db.QueryRowContext(ctx, query, id)
 
 	var bundle Bundle
 	var allowedConditions string
 	var publishedAt sql.NullTime
 	var unpublishedAt sql.NullTime
-	if err := row.Scan(&bundle.ID, &bundle.Name, &bundle.SupplierID, &bundle.SupplierName, &bundle.Category, &allowedConditions, &bundle.BundlePrice, &bundle.Notes, &bundle.IsPublished, &publishedAt, &unpublishedAt); err != nil {
+	if err := row.Scan(&bundle.ID, &bundle.Name, &bundle.SupplierID, &bundle.SupplierName, &bundle.Category, &allowedConditions, &bundle.BundlePrice, &bundle.Notes, &bundle.ImageMimeType, &bundle.IsPublished, &publishedAt, &unpublishedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Bundle{}, ErrNotFound
 		}

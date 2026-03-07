@@ -13,6 +13,7 @@ type MemoryStore struct {
 	supplierName map[int]string
 	pickerByID   map[int]PickerBook
 	bundles      []Bundle
+	images       map[int]Image
 }
 
 func NewMemoryStore(supplierName map[int]string, pickerBooks []PickerBook) *MemoryStore {
@@ -31,6 +32,7 @@ func NewMemoryStore(supplierName map[int]string, pickerBooks []PickerBook) *Memo
 		supplierName: clonedNames,
 		pickerByID:   pickerByID,
 		bundles:      make([]Bundle, 0),
+		images:       make(map[int]Image),
 	}
 }
 
@@ -47,7 +49,9 @@ func (s *MemoryStore) List() ([]ListItem, error) {
 			Category:          bundle.Category,
 			AllowedConditions: cloneStringSlice(bundle.AllowedConditions),
 			BookCount:         len(bundle.Books),
+			BundleMRP:         sumBundleBooksMRP(bundle.Books),
 			BundlePrice:       bundle.BundlePrice,
+			HasImage:          len(s.images[bundle.ID].Data) > 0,
 			IsPublished:       bundle.IsPublished,
 			PublishedAt:       cloneTimePointer(bundle.PublishedAt),
 			UnpublishedAt:     cloneTimePointer(bundle.UnpublishedAt),
@@ -63,6 +67,7 @@ func (s *MemoryStore) Create(input CreateInput) (Bundle, error) {
 	bundle := s.bundleFromInput(s.nextID, input)
 	s.nextID++
 	s.bundles = append(s.bundles, bundle)
+	s.images[bundle.ID] = cloneImage(input.Image)
 	return cloneBundle(bundle), nil
 }
 
@@ -95,10 +100,17 @@ func (s *MemoryStore) Update(id int, input UpdateInput) (Bundle, error) {
 		BundlePrice:       input.BundlePrice,
 		Notes:             input.Notes,
 	})
+	updated.ImageMimeType = s.bundles[index].ImageMimeType
+	if input.Image != nil {
+		updated.ImageMimeType = input.Image.MimeType
+	}
 	updated.IsPublished = s.bundles[index].IsPublished
 	updated.PublishedAt = cloneTimePointer(s.bundles[index].PublishedAt)
 	updated.UnpublishedAt = cloneTimePointer(s.bundles[index].UnpublishedAt)
 	s.bundles[index] = updated
+	if input.Image != nil {
+		s.images[id] = cloneImage(*input.Image)
+	}
 	return cloneBundle(updated), nil
 }
 
@@ -148,6 +160,21 @@ func (s *MemoryStore) ListBooksForPicker() ([]PickerBook, error) {
 	return books, nil
 }
 
+func (s *MemoryStore) GetImage(id int) (Image, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	index := s.indexByID(id)
+	if index < 0 {
+		return Image{}, ErrNotFound
+	}
+	image := s.images[id]
+	if len(image.Data) == 0 {
+		return Image{}, ErrNotFound
+	}
+	return cloneImage(image), nil
+}
+
 func (s *MemoryStore) bundleFromInput(id int, input CreateInput) Bundle {
 	books := make([]BundleBook, 0, len(input.BookIDs))
 	for _, bookID := range input.BookIDs {
@@ -180,6 +207,7 @@ func (s *MemoryStore) bundleFromInput(id int, input CreateInput) Bundle {
 		Notes:             input.Notes,
 		BookIDs:           cloneIntSlice(input.BookIDs),
 		Books:             books,
+		ImageMimeType:     input.Image.MimeType,
 		IsPublished:       false,
 		PublishedAt:       nil,
 		UnpublishedAt:     &now,
@@ -242,6 +270,20 @@ func cloneTimePointer(value *time.Time) *time.Time {
 	}
 	copied := *value
 	return &copied
+}
+
+func cloneImage(in Image) Image {
+	data := make([]byte, len(in.Data))
+	copy(data, in.Data)
+	return Image{Data: data, MimeType: in.MimeType}
+}
+
+func sumBundleBooksMRP(books []BundleBook) float64 {
+	total := 0.0
+	for _, book := range books {
+		total += book.MRP
+	}
+	return total
 }
 
 func outOfStockTitlesFromBooks(books []BundleBook) []string {

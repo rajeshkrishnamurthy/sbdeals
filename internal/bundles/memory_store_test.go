@@ -17,6 +17,7 @@ func TestMemoryStoreCreateListAndGet(t *testing.T) {
 		BookIDs:           []int{10, 11},
 		BundlePrice:       499,
 		Notes:             "Weekend deal",
+		Image:             Image{Data: []byte("bundle-image"), MimeType: "image/png"},
 	})
 	if err != nil {
 		t.Fatalf("create returned error: %v", err)
@@ -46,6 +47,12 @@ func TestMemoryStoreCreateListAndGet(t *testing.T) {
 	}
 	if items[0].SupplierName != "Supplier One" || items[0].BookCount != 2 {
 		t.Fatalf("unexpected list item: %+v", items[0])
+	}
+	if !items[0].HasImage {
+		t.Fatalf("expected list item to indicate image presence")
+	}
+	if items[0].BundleMRP != 900 {
+		t.Fatalf("expected bundle mrp sum 900, got %v", items[0].BundleMRP)
 	}
 
 	fetched, err := store.Get(created.ID)
@@ -124,6 +131,7 @@ func TestMemoryStoreUpdate(t *testing.T) {
 		AllowedConditions: []string{"Very good", "Good as new"},
 		BookIDs:           []int{10, 11},
 		BundlePrice:       499,
+		Image:             Image{Data: []byte("initial-image"), MimeType: "image/png"},
 	})
 	if err != nil {
 		t.Fatalf("create returned error: %v", err)
@@ -137,6 +145,7 @@ func TestMemoryStoreUpdate(t *testing.T) {
 		BookIDs:           []int{10, 12},
 		BundlePrice:       399,
 		Notes:             "Updated notes",
+		Image:             &Image{Data: []byte("updated-image"), MimeType: "image/jpeg"},
 	})
 	if err != nil {
 		t.Fatalf("update returned error: %v", err)
@@ -147,6 +156,9 @@ func TestMemoryStoreUpdate(t *testing.T) {
 	if !reflect.DeepEqual(updated.BookIDs, []int{10, 12}) {
 		t.Fatalf("unexpected updated book ids: %+v", updated.BookIDs)
 	}
+	if updated.ImageMimeType != "image/jpeg" {
+		t.Fatalf("expected image mime update, got %q", updated.ImageMimeType)
+	}
 }
 
 func TestMemoryStoreNotFound(t *testing.T) {
@@ -156,6 +168,33 @@ func TestMemoryStoreNotFound(t *testing.T) {
 	}
 	if _, err := store.Update(99, UpdateInput{}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound for update, got %v", err)
+	}
+	if _, err := store.GetImage(99); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for image, got %v", err)
+	}
+}
+
+func TestMemoryStoreGetImage(t *testing.T) {
+	store := newMemoryStoreFixture()
+	created, err := store.Create(CreateInput{
+		Name:              "Starter Bundle",
+		SupplierID:        1,
+		Category:          "Fiction",
+		AllowedConditions: []string{"Very good", "Good as new"},
+		BookIDs:           []int{10, 11},
+		BundlePrice:       499,
+		Image:             Image{Data: []byte("bundle-image"), MimeType: "image/png"},
+	})
+	if err != nil {
+		t.Fatalf("create returned error: %v", err)
+	}
+
+	image, err := store.GetImage(created.ID)
+	if err != nil {
+		t.Fatalf("get image returned error: %v", err)
+	}
+	if string(image.Data) != "bundle-image" || image.MimeType != "image/png" {
+		t.Fatalf("unexpected image payload: %+v", image)
 	}
 }
 

@@ -48,6 +48,11 @@ type BundleBook struct {
 	InStock     bool
 }
 
+type Image struct {
+	Data     []byte
+	MimeType string
+}
+
 // PickerBook represents an eligible book candidate for the bundle picker.
 type PickerBook struct {
 	BookID      int
@@ -75,6 +80,7 @@ type Bundle struct {
 	Notes             string
 	BookIDs           []int
 	Books             []BundleBook
+	ImageMimeType     string
 	IsPublished       bool
 	PublishedAt       *time.Time
 	UnpublishedAt     *time.Time
@@ -88,7 +94,9 @@ type ListItem struct {
 	Category          string
 	AllowedConditions []string
 	BookCount         int
+	BundleMRP         float64
 	BundlePrice       float64
+	HasImage          bool
 	IsPublished       bool
 	PublishedAt       *time.Time
 	UnpublishedAt     *time.Time
@@ -103,6 +111,7 @@ type CreateInput struct {
 	BookIDs           []int
 	BundlePrice       float64
 	Notes             string
+	Image             Image
 }
 
 // UpdateInput captures editable fields for bundle updates.
@@ -114,6 +123,7 @@ type UpdateInput struct {
 	BookIDs           []int
 	BundlePrice       float64
 	Notes             string
+	Image             *Image
 }
 
 // Store defines persistence operations for bundles.
@@ -125,4 +135,5 @@ type Store interface {
 	Publish(id int) (Bundle, error)
 	Unpublish(id int) (Bundle, error)
 	ListBooksForPicker() ([]PickerBook, error)
+	GetImage(id int) (Image, error)
 }

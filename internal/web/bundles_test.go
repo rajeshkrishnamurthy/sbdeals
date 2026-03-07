@@ -1,9 +1,11 @@
 package web
 
 import (
+	"bytes"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -25,15 +27,24 @@ func TestBundlesListRendersColumnsAndNav(t *testing.T) {
 	}
 
 	body := rr.Body.String()
-	checks := []string{"Bundles", "Add Bundle", "Supplier", "Category", "Allowed condition(s)", "# of books", "Bundle price", "Publish", "View/Edit"}
+	checks := []string{"Bundles", "Add Bundle", "Image", "Supplier", "Category", "# of books", "Bundle price", "Discount %", "Publish", "View/Edit"}
 	for _, check := range checks {
 		if !strings.Contains(body, check) {
 			t.Fatalf("expected body to contain %q", check)
 		}
 	}
+	if strings.Contains(body, "Allowed condition(s)") {
+		t.Fatalf("did not expect allowed conditions list column")
+	}
+	if !strings.Contains(body, "No image") {
+		t.Fatalf("expected no-image placeholder in list")
+	}
 	assertAdminNav(t, body, "/admin/bundles")
 	if !strings.Contains(body, `action="/admin/bundles/1/publish"`) {
 		t.Fatalf("expected publish toggle action in list row")
+	}
+	if !strings.Contains(body, "45%") {
+		t.Fatalf("expected discount column to show rounded percent")
 	}
 	if !regexp.MustCompile(`\(\d+d\)`).MatchString(body) {
 		t.Fatalf("expected recency indicator like (Xd)")
@@ -45,19 +56,22 @@ func TestCreateBundleSuccess(t *testing.T) {
 	bookStore := books.NewMemoryStore()
 	s := NewServerWithStores(supplierStore, bookStore, bundleStore)
 
-	form := url.Values{}
-	form.Set("name", "Starter")
-	form.Set("supplier_id", "1")
-	form.Set("category", "Fiction")
-	form.Add("allowed_conditions", "Very good")
-	form.Add("allowed_conditions", "Good as new")
-	form.Add("book_ids", "10")
-	form.Add("book_ids", "11")
-	form.Set("bundle_price", "499")
-	form.Set("notes", "Weekend deal")
-
-	req := httptest.NewRequest(http.MethodPost, "/admin/bundles", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	contentType, body := multipartBundleForm(t, bundleFormParts{
+		Fields: map[string][]string{
+			"name":               {"Starter"},
+			"supplier_id":        {"1"},
+			"category":           {"Fiction"},
+			"allowed_conditions": {"Very good", "Good as new"},
+			"book_ids":           {"10", "11"},
+			"bundle_price":       {"499"},
+			"notes":              {"Weekend deal"},
+		},
+		FileField:   "image",
+		FileName:    "bundle.jpg",
+		FileContent: []byte("bundle-image"),
+	})
+	req := httptest.NewRequest(http.MethodPost, "/admin/bundles", body)
+	req.Header.Set("Content-Type", contentType)
 	rr := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rr, req)
 
@@ -81,15 +95,20 @@ func TestCreateBundleRequiresAtLeastTwoBooks(t *testing.T) {
 	supplierStore, bundleStore := newBundleStores(t)
 	s := NewServerWithStores(supplierStore, books.NewMemoryStore(), bundleStore)
 
-	form := url.Values{}
-	form.Set("supplier_id", "1")
-	form.Set("category", "Fiction")
-	form.Add("allowed_conditions", "Very good")
-	form.Add("book_ids", "10")
-	form.Set("bundle_price", "300")
-
-	req := httptest.NewRequest(http.MethodPost, "/admin/bundles", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	contentType, body := multipartBundleForm(t, bundleFormParts{
+		Fields: map[string][]string{
+			"supplier_id":        {"1"},
+			"category":           {"Fiction"},
+			"allowed_conditions": {"Very good"},
+			"book_ids":           {"10"},
+			"bundle_price":       {"300"},
+		},
+		FileField:   "image",
+		FileName:    "bundle.jpg",
+		FileContent: []byte("bundle-image"),
+	})
+	req := httptest.NewRequest(http.MethodPost, "/admin/bundles", body)
+	req.Header.Set("Content-Type", contentType)
 	rr := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rr, req)
 
@@ -111,16 +130,21 @@ func TestCreateBundleAllowsSingleBoxSetBook(t *testing.T) {
 	supplierStore, bundleStore := newBundleStores(t)
 	s := NewServerWithStores(supplierStore, books.NewMemoryStore(), bundleStore)
 
-	form := url.Values{}
-	form.Set("name", "Box Set Single")
-	form.Set("supplier_id", "1")
-	form.Set("category", "Fiction")
-	form.Add("allowed_conditions", "Very good")
-	form.Add("book_ids", "30")
-	form.Set("bundle_price", "300")
-
-	req := httptest.NewRequest(http.MethodPost, "/admin/bundles", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	contentType, body := multipartBundleForm(t, bundleFormParts{
+		Fields: map[string][]string{
+			"name":               {"Box Set Single"},
+			"supplier_id":        {"1"},
+			"category":           {"Fiction"},
+			"allowed_conditions": {"Very good"},
+			"book_ids":           {"30"},
+			"bundle_price":       {"300"},
+		},
+		FileField:   "image",
+		FileName:    "bundle.jpg",
+		FileContent: []byte("bundle-image"),
+	})
+	req := httptest.NewRequest(http.MethodPost, "/admin/bundles", body)
+	req.Header.Set("Content-Type", contentType)
 	rr := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rr, req)
 
@@ -149,17 +173,18 @@ func TestEditBundleRevalidatesWhenSupplierChanges(t *testing.T) {
 
 	s := NewServerWithStores(supplierStore, books.NewMemoryStore(), bundleStore)
 
-	form := url.Values{}
-	form.Set("name", "Starter")
-	form.Set("supplier_id", "2")
-	form.Set("category", "Fiction")
-	form.Add("allowed_conditions", "Very good")
-	form.Add("book_ids", "10")
-	form.Add("book_ids", "11")
-	form.Set("bundle_price", "499")
-
-	req := httptest.NewRequest(http.MethodPost, "/admin/bundles/1", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	contentType, body := multipartBundleForm(t, bundleFormParts{
+		Fields: map[string][]string{
+			"name":               {"Starter"},
+			"supplier_id":        {"2"},
+			"category":           {"Fiction"},
+			"allowed_conditions": {"Very good"},
+			"book_ids":           {"10", "11"},
+			"bundle_price":       {"499"},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/admin/bundles/1", body)
+	req.Header.Set("Content-Type", contentType)
 	rr := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rr, req)
 
@@ -197,8 +222,72 @@ func TestBundleNewIncludesEnhancementScript(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), "/assets/bundles-form.js") {
 		t.Fatalf("expected bundles form enhancement script tag")
 	}
+	if !strings.Contains(rr.Body.String(), "Bundle image") {
+		t.Fatalf("expected bundle image field")
+	}
 	if !strings.Contains(rr.Body.String(), "Minimum 2 items required unless one selected item is marked Box Set.") {
 		t.Fatalf("expected conditional minimum-items helper text")
+	}
+}
+
+func TestCreateBundleRequiresImage(t *testing.T) {
+	supplierStore, bundleStore := newBundleStores(t)
+	s := NewServerWithStores(supplierStore, books.NewMemoryStore(), bundleStore)
+
+	contentType, body := multipartBundleForm(t, bundleFormParts{
+		Fields: map[string][]string{
+			"supplier_id":        {"1"},
+			"category":           {"Fiction"},
+			"allowed_conditions": {"Very good"},
+			"book_ids":           {"10", "11"},
+			"bundle_price":       {"499"},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/admin/bundles", body)
+	req.Header.Set("Content-Type", contentType)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+	bodyText := rr.Body.String()
+	if !strings.Contains(bodyText, "Bundle image is required.") {
+		t.Fatalf("expected missing-image validation message")
+	}
+	if !strings.Contains(bodyText, `class="toast-error"`) {
+		t.Fatalf("expected toast validation error")
+	}
+}
+
+func TestBundleImageRouteServesImage(t *testing.T) {
+	supplierStore, bundleStore := newBundleStores(t)
+	created, err := bundleStore.Create(bundles.CreateInput{
+		Name:              "Starter",
+		SupplierID:        1,
+		Category:          "Fiction",
+		AllowedConditions: []string{"Very good", "Good as new"},
+		BookIDs:           []int{10, 11},
+		BundlePrice:       499,
+		Image:             bundles.Image{Data: []byte("bundle-image"), MimeType: "image/png"},
+	})
+	if err != nil {
+		t.Fatalf("seed create failed: %v", err)
+	}
+
+	s := NewServerWithStores(supplierStore, books.NewMemoryStore(), bundleStore)
+	req := httptest.NewRequest(http.MethodGet, "/admin/bundles/"+strconv.Itoa(created.ID)+"/image", nil)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if rr.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("expected image/png content type, got %q", rr.Header().Get("Content-Type"))
+	}
+	if rr.Body.String() != "bundle-image" {
+		t.Fatalf("unexpected image bytes")
 	}
 }
 
@@ -211,6 +300,7 @@ func TestBundleEditIncludesPublishToggleAndRecency(t *testing.T) {
 		AllowedConditions: []string{"Very good", "Good as new"},
 		BookIDs:           []int{10, 11},
 		BundlePrice:       499,
+		Image:             bundles.Image{Data: []byte("bundle-image"), MimeType: "image/png"},
 	})
 	if err != nil {
 		t.Fatalf("seed create failed: %v", err)
@@ -226,6 +316,9 @@ func TestBundleEditIncludesPublishToggleAndRecency(t *testing.T) {
 	body := rr.Body.String()
 	if !strings.Contains(body, `action="/admin/bundles/1/publish?from=edit"`) {
 		t.Fatalf("expected edit publish toggle action")
+	}
+	if !strings.Contains(body, `/admin/bundles/1/image`) {
+		t.Fatalf("expected existing bundle image preview on edit")
 	}
 	if !regexp.MustCompile(`\(\d+d\)`).MatchString(body) {
 		t.Fatalf("expected recency indicator on edit page")
@@ -304,6 +397,10 @@ func TestBundlePathRouteRoundTrip(t *testing.T) {
 	id, action, ok = parseBundlePath("/admin/bundles/123/unpublish")
 	if !ok || id != 123 || action != "unpublish" {
 		t.Fatalf("unexpected unpublish parse result: %v %v %v", id, action, ok)
+	}
+	id, action, ok = parseBundlePath("/admin/bundles/123/image")
+	if !ok || id != 123 || action != "image" {
+		t.Fatalf("unexpected image parse result: %v %v %v", id, action, ok)
 	}
 
 	_, _, ok = parseBundlePath("/admin/bundles/123/books")
@@ -426,4 +523,37 @@ func TestBundlePublishFailsWithOutOfStockTitlesShowsToast(t *testing.T) {
 	if !strings.Contains(body, "Cannot publish bundle because these books are out of stock: Book B.") {
 		t.Fatalf("expected bundle out-of-stock toast message")
 	}
+}
+
+type bundleFormParts struct {
+	Fields      map[string][]string
+	FileField   string
+	FileName    string
+	FileContent []byte
+}
+
+func multipartBundleForm(t *testing.T, parts bundleFormParts) (string, io.Reader) {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	writer := multipart.NewWriter(buf)
+	for key, values := range parts.Fields {
+		for _, value := range values {
+			if err := writer.WriteField(key, value); err != nil {
+				t.Fatalf("write field %s: %v", key, err)
+			}
+		}
+	}
+	if parts.FileField != "" {
+		fw, err := writer.CreateFormFile(parts.FileField, parts.FileName)
+		if err != nil {
+			t.Fatalf("create form file: %v", err)
+		}
+		if _, err := fw.Write(parts.FileContent); err != nil {
+			t.Fatalf("write form file: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+	return writer.FormDataContentType(), buf
 }

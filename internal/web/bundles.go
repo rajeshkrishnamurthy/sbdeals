@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -15,6 +17,7 @@ import (
 )
 
 var bundleValidationFieldOrder = []string{
+	"image",
 	"supplier_id",
 	"category",
 	"allowed_conditions",
@@ -46,16 +49,18 @@ func (s *Server) handleBundleNew(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.renderBundleForm(w, buildBundleFormView(bundleFormViewOptions{
-		PageTitle:       "Add Bundle",
-		Action:          "/admin/bundles",
-		SubmitLabel:     "Save Bundle",
-		ActiveSection:   "bundles",
-		Input:           bundleFormInput{},
-		SupplierOptions: suppliersList,
-		CandidateBooks:  pickerBooks,
-		SelectedBooks:   []bundles.PickerBook{},
-		Errors:          map[string]string{},
-		ShowSummary:     false,
+		PageTitle:        "Add Bundle",
+		Action:           "/admin/bundles",
+		SubmitLabel:      "Save Bundle",
+		ActiveSection:    "bundles",
+		Input:            bundleFormInput{},
+		SupplierOptions:  suppliersList,
+		CandidateBooks:   pickerBooks,
+		SelectedBooks:    []bundles.PickerBook{},
+		Errors:           map[string]string{},
+		HasExistingImage: false,
+		BundleID:         0,
+		ShowSummary:      false,
 	}))
 }
 
@@ -72,6 +77,12 @@ func (s *Server) handleBundleItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch action {
+	case "image":
+		if r.Method != http.MethodGet {
+			writeMethodNotAllowed(w, http.MethodGet)
+			return
+		}
+		s.serveBundleImage(w, r, bundleID)
 	case "publish":
 		if r.Method != http.MethodPost && r.Method != http.MethodPatch {
 			writeMethodNotAllowed(w, http.MethodPost, http.MethodPatch)
@@ -117,8 +128,8 @@ func (s *Server) renderBundlesList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createBundle(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form data", http.StatusBadRequest)
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		http.Error(w, "invalid multipart form", http.StatusBadRequest)
 		return
 	}
 
@@ -129,7 +140,12 @@ func (s *Server) createBundle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	input := readBundleFormInput(r)
-	parsed, fieldErrors, selectedBooks := validateBundleFormInput(input, suppliersList, pickerBooks)
+	image, imageProvided, err := readBundleImageFromRequest(r)
+	if err != nil {
+		http.Error(w, "failed to read bundle image", http.StatusBadRequest)
+		return
+	}
+	parsed, fieldErrors, selectedBooks := validateBundleFormInput(input, suppliersList, pickerBooks, true, imageProvided)
 	if len(fieldErrors) > 0 {
 		w.WriteHeader(http.StatusBadRequest)
 		s.renderBundleForm(w, buildBundleFormView(bundleFormViewOptions{
@@ -156,6 +172,7 @@ func (s *Server) createBundle(w http.ResponseWriter, r *http.Request) {
 		BookIDs:           parsed.BookIDs,
 		BundlePrice:       parsed.BundlePrice,
 		Notes:             parsed.Notes,
+		Image:             image,
 	})
 	if err != nil {
 		http.Error(w, "failed to create bundle", http.StatusInternalServerError)
@@ -213,6 +230,8 @@ func (s *Server) renderBundleDetail(w http.ResponseWriter, r *http.Request, bund
 		CandidateBooks:    pickerBooks,
 		SelectedBooks:     selectedBooks,
 		Errors:            map[string]string{},
+		HasExistingImage:  strings.TrimSpace(bundle.ImageMimeType) != "",
+		BundleID:          bundleID,
 		ShowSummary:       true,
 		ShowPublishToggle: true,
 		PublishAction:     fmt.Sprintf("/admin/bundles/%d/%s?from=edit", bundleID, toggleActionPath(bundle.IsPublished)),
@@ -233,8 +252,8 @@ func (s *Server) updateBundle(w http.ResponseWriter, r *http.Request, bundleID i
 		return
 	}
 
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form data", http.StatusBadRequest)
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		http.Error(w, "invalid multipart form", http.StatusBadRequest)
 		return
 	}
 
@@ -245,7 +264,12 @@ func (s *Server) updateBundle(w http.ResponseWriter, r *http.Request, bundleID i
 	}
 
 	input := readBundleFormInput(r)
-	parsed, fieldErrors, selectedBooks := validateBundleFormInput(input, suppliersList, pickerBooks)
+	image, imageProvided, err := readBundleImageFromRequest(r)
+	if err != nil {
+		http.Error(w, "failed to read bundle image", http.StatusBadRequest)
+		return
+	}
+	parsed, fieldErrors, selectedBooks := validateBundleFormInput(input, suppliersList, pickerBooks, false, imageProvided)
 	if len(fieldErrors) > 0 {
 		w.WriteHeader(http.StatusBadRequest)
 		summary := &bundleSummaryViewModel{
@@ -266,6 +290,8 @@ func (s *Server) updateBundle(w http.ResponseWriter, r *http.Request, bundleID i
 			SelectedBooks:     selectedBooks,
 			Errors:            fieldErrors,
 			ValidationToast:   buildValidationToast(fieldErrors, bundleValidationFieldOrder),
+			HasExistingImage:  strings.TrimSpace(currentBundle.ImageMimeType) != "",
+			BundleID:          bundleID,
 			ShowSummary:       true,
 			ShowPublishToggle: true,
 			PublishAction:     fmt.Sprintf("/admin/bundles/%d/%s?from=edit", bundleID, toggleActionPath(currentBundle.IsPublished)),
@@ -284,6 +310,7 @@ func (s *Server) updateBundle(w http.ResponseWriter, r *http.Request, bundleID i
 		BookIDs:           parsed.BookIDs,
 		BundlePrice:       parsed.BundlePrice,
 		Notes:             parsed.Notes,
+		Image:             optionalBundleImage(image, imageProvided),
 	})
 	if err != nil {
 		if errors.Is(err, bundles.ErrNotFound) {
@@ -324,6 +351,14 @@ func (s *Server) unpublishBundle(w http.ResponseWriter, r *http.Request, bundleI
 		return
 	}
 	http.Redirect(w, r, bundlePublishRedirectPath(r, bundleID, "Bundle unpublished successfully.", ""), http.StatusSeeOther)
+}
+
+func optionalBundleImage(image bundles.Image, provided bool) *bundles.Image {
+	if !provided {
+		return nil
+	}
+	copyImage := image
+	return &copyImage
 }
 
 func bundlePublishRedirectPath(r *http.Request, bundleID int, flash string, errorMessage string) string {
@@ -375,6 +410,27 @@ func readBundleFormInput(r *http.Request) bundleFormInput {
 	}
 }
 
+func readBundleImageFromRequest(r *http.Request) (bundles.Image, bool, error) {
+	file, fileHeader, err := r.FormFile("image")
+	if err != nil {
+		if errors.Is(err, http.ErrMissingFile) {
+			return bundles.Image{}, false, nil
+		}
+		return bundles.Image{}, false, err
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return bundles.Image{}, false, err
+	}
+	mimeType := strings.TrimSpace(fileHeader.Header.Get("Content-Type"))
+	if mimeType == "" {
+		mimeType = http.DetectContentType(data)
+	}
+	return bundles.Image{Data: data, MimeType: mimeType}, true, nil
+}
+
 type parsedBundleForm struct {
 	Name              string
 	SupplierID        int
@@ -385,9 +441,12 @@ type parsedBundleForm struct {
 	Notes             string
 }
 
-func validateBundleFormInput(input bundleFormInput, suppliersList []suppliers.Supplier, pickerBooks []bundles.PickerBook) (parsedBundleForm, map[string]string, []bundles.PickerBook) {
+func validateBundleFormInput(input bundleFormInput, suppliersList []suppliers.Supplier, pickerBooks []bundles.PickerBook, requireImage bool, imageProvided bool) (parsedBundleForm, map[string]string, []bundles.PickerBook) {
 	result := parsedBundleForm{Name: input.Name, Category: input.Category, AllowedConditions: append([]string(nil), input.AllowedConditions...), Notes: input.Notes}
 	errorsByField := map[string]string{}
+	if requireImage && !imageProvided {
+		errorsByField["image"] = "Bundle image is required."
+	}
 
 	supplierID, supplierErr := parseSupplierIDForBundle(input.SupplierID, suppliersList)
 	if supplierErr != "" {
@@ -584,10 +643,28 @@ func parseBundlePath(path string) (int, string, bool) {
 		return id, "", true
 	}
 	action := parts[1]
-	if action != "publish" && action != "unpublish" {
+	if action != "publish" && action != "unpublish" && action != "image" {
 		return 0, "", false
 	}
 	return id, action, true
+}
+
+func (s *Server) serveBundleImage(w http.ResponseWriter, r *http.Request, bundleID int) {
+	image, err := s.bundleStore.GetImage(bundleID)
+	if errors.Is(err, bundles.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, "failed to load bundle image", http.StatusInternalServerError)
+		return
+	}
+	mimeType := strings.TrimSpace(image.MimeType)
+	if mimeType == "" {
+		mimeType = http.DetectContentType(image.Data)
+	}
+	w.Header().Set("Content-Type", mimeType)
+	_, _ = w.Write(image.Data)
 }
 
 func bundleLabel(name string, id int) string {
@@ -678,6 +755,8 @@ type bundleFormViewModel struct {
 	CandidateBooks    []bundles.PickerBook
 	SelectedBooks     []bundles.PickerBook
 	Errors            map[string]string
+	HasExistingImage  bool
+	BundleID          int
 	BundleMRPText     string
 	SumMyPriceText    string
 	SumMyBundleText   string
@@ -720,6 +799,8 @@ type bundleFormViewOptions struct {
 	CandidateBooks    []bundles.PickerBook
 	SelectedBooks     []bundles.PickerBook
 	Errors            map[string]string
+	HasExistingImage  bool
+	BundleID          int
 	ShowSummary       bool
 	Summary           *bundleSummaryViewModel
 }
@@ -749,6 +830,8 @@ func buildBundleFormView(options bundleFormViewOptions) bundleFormViewModel {
 		CandidateBooks:    options.CandidateBooks,
 		SelectedBooks:     options.SelectedBooks,
 		Errors:            options.Errors,
+		HasExistingImage:  options.HasExistingImage,
+		BundleID:          options.BundleID,
 		BundleMRPText:     formatDecimal(totals.BundleMRP),
 		SumMyPriceText:    formatDecimal(totals.SumMyPrice),
 		SumMyBundleText:   formatDecimal(totals.SumMyBundlePrice),
@@ -764,11 +847,19 @@ func (s *Server) renderBundleForm(w http.ResponseWriter, data bundleFormViewMode
 	}
 }
 
+func formatBundleDiscountPercent(mrp float64, bundlePrice float64) string {
+	if mrp <= 0 {
+		return "—"
+	}
+	discount := ((mrp - bundlePrice) / mrp) * 100
+	return fmt.Sprintf("%d%%", int(math.Round(discount)))
+}
+
 var bundlesListTemplate = template.Must(template.New("bundles-list").Funcs(template.FuncMap{
 	"adminNav":         adminNav,
 	"bundleLabel":      bundleLabel,
 	"money":            func(v float64) string { return fmt.Sprintf("%.2f", v) },
-	"joinConditions":   func(values []string) string { return strings.Join(values, ", ") },
+	"bundleDiscount":   formatBundleDiscountPercent,
 	"publishRecency":   publishRecencyLabel,
 	"publishState":     publishStateLabel,
 	"toggleActionPath": toggleActionPath,
@@ -800,6 +891,9 @@ var bundlesListTemplate = template.Must(template.New("bundles-list").Funcs(templ
     .toggle.off { background:#f3f4f6; color:#374151; border-color:#d1d5db; }
     .recency { color:var(--muted); font-size:0.8rem; }
     .row-link { color: var(--accent); font-weight: 600; }
+    .thumb-box { width:32px; height:48px; border:1px solid #d4dce6; background:#f2f4f7; display:flex; align-items:center; justify-content:center; border-radius:4px; }
+    .thumb-image { width:32px; height:48px; object-fit:contain; object-position:center; display:block; }
+    .thumb-placeholder { font-size:9px; color:#6b7280; text-align:center; line-height:1.1; }
   </style>
 </head>
 <body>
@@ -816,12 +910,13 @@ var bundlesListTemplate = template.Must(template.New("bundles-list").Funcs(templ
     <table>
       <thead>
         <tr>
+          <th>Image</th>
           <th>Bundle</th>
           <th>Supplier</th>
           <th>Category</th>
-          <th>Allowed condition(s)</th>
           <th># of books</th>
           <th>Bundle price</th>
+          <th>Discount %</th>
           <th>Publish</th>
           <th>Action</th>
         </tr>
@@ -830,12 +925,21 @@ var bundlesListTemplate = template.Must(template.New("bundles-list").Funcs(templ
       {{if .Bundles}}
         {{range .Bundles}}
         <tr>
+          <td>
+            <div class="thumb-box">
+            {{if .HasImage}}
+              <img class="thumb-image" src="/admin/bundles/{{.ID}}/image" alt="bundle image">
+            {{else}}
+              <span class="thumb-placeholder">No image</span>
+            {{end}}
+            </div>
+          </td>
           <td>{{bundleLabel .Name .ID}}</td>
           <td>{{.SupplierName}}</td>
           <td>{{.Category}}</td>
-          <td>{{joinConditions .AllowedConditions}}</td>
           <td>{{.BookCount}}</td>
           <td>{{money .BundlePrice}}</td>
+          <td>{{bundleDiscount .BundleMRP .BundlePrice}}</td>
           <td>
             <form class="inline-publish" method="post" action="/admin/bundles/{{.ID}}/{{toggleActionPath .IsPublished}}">
               <button class="toggle {{if .IsPublished}}on{{else}}off{{end}}" type="submit">{{publishState .IsPublished}}</button>
@@ -846,7 +950,7 @@ var bundlesListTemplate = template.Must(template.New("bundles-list").Funcs(templ
         </tr>
         {{end}}
       {{else}}
-        <tr><td colspan="8">No bundles yet. Click "Add Bundle" to create one.</td></tr>
+        <tr><td colspan="9">No bundles yet. Click "Add Bundle" to create one.</td></tr>
       {{end}}
       </tbody>
     </table>
@@ -915,6 +1019,9 @@ var bundleFormTemplate = template.Must(template.New("bundle-form").Funcs(templat
     .total-label { color:var(--muted); font-size:0.85rem; }
     .total-value { font-weight:700; }
     .hidden { display:none; }
+    .thumb-box { width:32px; height:48px; border:1px solid #d4dce6; background:#f2f4f7; display:flex; align-items:center; justify-content:center; border-radius:4px; margin-bottom:8px; }
+    .thumb-image { width:32px; height:48px; object-fit:contain; object-position:center; display:block; }
+    .thumb-placeholder { font-size:9px; color:#6b7280; text-align:center; line-height:1.1; }
     .toast-error { position:fixed; top:16px; right:16px; max-width:min(420px, 90vw); z-index:999; margin:0; padding:10px 12px; border-radius:10px; background:#fee2e2; color:#991b1b; border:1px solid #fecaca; box-shadow:0 8px 24px rgba(0,0,0,0.12); }
     @media (max-width: 960px) { .picker-grid { grid-template-columns: 1fr; } .totals { grid-template-columns: 1fr; } }
   </style>
@@ -939,7 +1046,7 @@ var bundleFormTemplate = template.Must(template.New("bundle-form").Funcs(templat
     <div class="summary"><strong>{{.Summary.Label}}</strong><br>Supplier: {{.Summary.SupplierName}} | Category: {{.Summary.Category}} | # of books: {{.Summary.BookCount}} | Bundle price: {{.Summary.BundlePrice}}</div>
     {{end}}
 
-    <form class="card" method="post" action="{{.Action}}">
+    <form class="card" method="post" action="{{.Action}}" enctype="multipart/form-data">
       <div class="step">
         <h2>Step 1: Choose Supplier</h2>
         <div class="field">
@@ -1061,6 +1168,15 @@ var bundleFormTemplate = template.Must(template.New("bundle-form").Funcs(templat
 
       <div class="step">
         <h2>Step 6: Optional Details + Save</h2>
+        <div class="field">
+          <label for="image">Bundle image</label>
+          <div class="thumb-box">
+            <img id="bundle-image-preview" class="thumb-image {{if .HasExistingImage}}{{else}}hidden{{end}}" src="{{if .HasExistingImage}}/admin/bundles/{{.BundleID}}/image{{end}}" alt="bundle image preview">
+            <span id="bundle-image-placeholder" class="thumb-placeholder {{if .HasExistingImage}}hidden{{end}}">No image</span>
+          </div>
+          <input id="image" name="image" type="file" accept="image/*" {{if .HasExistingImage}}{{else}}required{{end}}>
+          {{if .HasError "image"}}<div class="error">{{.Error "image"}}</div>{{end}}
+        </div>
         <div class="field"><label for="name">Bundle label/name (optional)</label><input id="name" name="name" value="{{.Input.Name}}"></div>
         <div class="field"><label for="notes">Notes/description (optional)</label><textarea id="notes" name="notes">{{.Input.Notes}}</textarea></div>
       </div>
