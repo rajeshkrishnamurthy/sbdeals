@@ -11,6 +11,7 @@ import (
 
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/books"
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/bundles"
+	"github.com/rajeshkrishnamurthy/sbdeals/internal/clicked"
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/rails"
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/suppliers"
 )
@@ -25,12 +26,13 @@ var defaultLocations = []string{
 
 // Server provides HTTP handlers for the Sprint 1 Supplier admin feature.
 type Server struct {
-	store       suppliers.Store
-	bookStore   books.Store
-	bundleStore bundles.Store
-	railStore   rails.Store
-	locations   []string
-	mux         *http.ServeMux
+	store        suppliers.Store
+	bookStore    books.Store
+	bundleStore  bundles.Store
+	railStore    rails.Store
+	clickedStore clicked.Store
+	locations    []string
+	mux          *http.ServeMux
 }
 
 func NewServer(store suppliers.Store, bookStores ...books.Store) *Server {
@@ -40,7 +42,8 @@ func NewServer(store suppliers.Store, bookStores ...books.Store) *Server {
 	}
 	bundleStore := bundles.Store(bundles.NewMemoryStore(nil, nil))
 	railStore := rails.Store(rails.NewMemoryStore())
-	return NewServerWithStores(store, bookStore, bundleStore, railStore)
+	clickedStore := clicked.Store(clicked.NewMemoryStore())
+	return NewServerWithStoresAndClicked(store, bookStore, bundleStore, railStore, clickedStore)
 }
 
 func NewServerWithStores(store suppliers.Store, bookStore books.Store, bundleStore bundles.Store, railStores ...rails.Store) *Server {
@@ -48,18 +51,24 @@ func NewServerWithStores(store suppliers.Store, bookStore books.Store, bundleSto
 	if len(railStores) > 0 && railStores[0] != nil {
 		railStore = railStores[0]
 	}
+	clickedStore := clicked.Store(clicked.NewMemoryStore())
+	return NewServerWithStoresAndClicked(store, bookStore, bundleStore, railStore, clickedStore)
+}
 
+func NewServerWithStoresAndClicked(store suppliers.Store, bookStore books.Store, bundleStore bundles.Store, railStore rails.Store, clickedStore clicked.Store) *Server {
 	s := &Server{
-		store:       store,
-		bookStore:   bookStore,
-		bundleStore: bundleStore,
-		railStore:   railStore,
-		locations:   append([]string(nil), defaultLocations...),
-		mux:         http.NewServeMux(),
+		store:        store,
+		bookStore:    bookStore,
+		bundleStore:  bundleStore,
+		railStore:    railStore,
+		clickedStore: clickedStore,
+		locations:    append([]string(nil), defaultLocations...),
+		mux:          http.NewServeMux(),
 	}
 
 	s.mux.HandleFunc("/", s.handleRoot)
 	s.mux.HandleFunc("/api/catalog", s.handleCatalogData)
+	s.mux.HandleFunc("/api/clicked", s.handleClickedCreate)
 	s.mux.HandleFunc("/admin/suppliers", s.handleSuppliersCollection)
 	s.mux.HandleFunc("/admin/suppliers/new", s.handleSupplierNew)
 	s.mux.HandleFunc("/admin/suppliers/", s.handleSupplierItem)

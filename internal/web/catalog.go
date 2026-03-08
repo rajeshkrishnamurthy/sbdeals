@@ -37,6 +37,7 @@ type catalogItemResponse struct {
 	OriginalPriceText  string `json:"originalPriceText,omitempty"`
 	DiscountText       string `json:"discountText,omitempty"`
 	ReserveButtonLabel string `json:"reserveButtonLabel"`
+	WhatsAppMessage    string `json:"whatsAppMessage"`
 }
 
 func (s *Server) renderCatalogPage(w http.ResponseWriter, r *http.Request) {
@@ -147,6 +148,7 @@ func (s *Server) buildCatalogBookItem(itemID int) (catalogItemResponse, bool, er
 		Title:              strings.TrimSpace(book.Title),
 		CurrentPriceText:   catalogMoney(book.MyPrice),
 		ReserveButtonLabel: "I'm interested",
+		WhatsAppMessage:    buildBookWhatsAppMessage(book.Title),
 	}
 	if strings.TrimSpace(book.CoverMimeType) != "" {
 		item.ImageURL = fmt.Sprintf("/admin/books/%d/cover", book.ID)
@@ -173,6 +175,7 @@ func (s *Server) buildCatalogBundleItem(itemID int) (catalogItemResponse, bool, 
 		Title:              bundleLabel(bundle.Name, bundle.ID),
 		CurrentPriceText:   catalogMoney(bundle.BundlePrice),
 		ReserveButtonLabel: "I'm interested",
+		WhatsAppMessage:    buildBundleWhatsAppMessage(bundle.Books),
 	}
 	if strings.TrimSpace(bundle.ImageMimeType) != "" {
 		item.ImageURL = fmt.Sprintf("/admin/bundles/%d/image", bundle.ID)
@@ -208,6 +211,25 @@ func sumCatalogBundleMRP(items []bundles.BundleBook) float64 {
 
 func catalogMoney(value float64) string {
 	return fmt.Sprintf("Rs. %.2f", value)
+}
+
+func buildBookWhatsAppMessage(title string) string {
+	return fmt.Sprintf("Hi Srikar, I'm interested in this book: %s.", strings.TrimSpace(title))
+}
+
+func buildBundleWhatsAppMessage(items []bundles.BundleBook) string {
+	titles := make([]string, 0, 3)
+	for _, item := range items {
+		if len(titles) == 3 {
+			break
+		}
+		title := strings.TrimSpace(item.Title)
+		if title == "" {
+			continue
+		}
+		titles = append(titles, title)
+	}
+	return fmt.Sprintf("Hi Srikar, I'm interested in this bundle containing: %s.", strings.Join(titles, ", "))
 }
 
 var catalogPageTemplate = template.Must(template.New("catalog-page").Parse(`<!doctype html>
@@ -398,7 +420,7 @@ var catalogPageTemplate = template.Must(template.New("catalog-page").Parse(`<!do
     <section class="hero">
       <p class="eyebrow">Curated Deals</p>
       <h1>Srikar Book Deals</h1>
-      <p class="hero-copy">Browse the latest curated rails across books and bundles. Reserve actions are intentionally placeholder-only in this sprint so the downstream reservation workflow can plug into a stable catalog surface.</p>
+      <p class="hero-copy">Browse curated rails across books and bundles, and tap I’m interested to continue the conversation on WhatsApp.</p>
     </section>
     <section class="catalog-region">
       <div id="catalog-root" data-endpoint="{{.DataEndpoint}}" class="catalog-loading" aria-live="polite">

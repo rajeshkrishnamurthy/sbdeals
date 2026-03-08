@@ -77,6 +77,9 @@ func TestCatalogDataReturnsPublishedRailsInBackendOrder(t *testing.T) {
 	if bundleRail.Items[0].ReserveButtonLabel != "I'm interested" {
 		t.Fatalf("unexpected bundle CTA: %+v", bundleRail.Items[0])
 	}
+	if bundleRail.Items[0].WhatsAppMessage != "Hi Srikar, I'm interested in this bundle containing: Bundle Book One, Bundle Book Two." {
+		t.Fatalf("unexpected bundle WhatsApp message: %+v", bundleRail.Items[0])
+	}
 
 	bookRail := payload.Rails[1]
 	if len(bookRail.Items) != 1 {
@@ -90,6 +93,9 @@ func TestCatalogDataReturnsPublishedRailsInBackendOrder(t *testing.T) {
 	}
 	if bookRail.Items[0].CurrentPriceText != "Rs. 250.00" || bookRail.Items[0].OriginalPriceText != "Rs. 400.00" || bookRail.Items[0].DiscountText != "38%" {
 		t.Fatalf("unexpected book pricing block: %+v", bookRail.Items[0])
+	}
+	if bookRail.Items[0].WhatsAppMessage != "Hi Srikar, I'm interested in this book: Published Book." {
+		t.Fatalf("unexpected book WhatsApp message: %+v", bookRail.Items[0])
 	}
 
 	emptyRail := payload.Rails[2]
@@ -119,7 +125,7 @@ func TestCatalogDataReturnsInlineFailureContract(t *testing.T) {
 	}
 }
 
-func TestCatalogAssetServesRetryAndComingSoonBehavior(t *testing.T) {
+func TestCatalogAssetServesRetryAndWhatsAppWiring(t *testing.T) {
 	s := newCatalogTestServer(t)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/assets/catalog.js", nil)
@@ -134,7 +140,7 @@ func TestCatalogAssetServesRetryAndComingSoonBehavior(t *testing.T) {
 	}
 
 	body := rr.Body.String()
-	checks := []string{"Coming soon", "Retry", "loadCatalog"}
+	checks := []string{"Connecting to WhatsApp...", "/api/clicked", "WHATSAPP_PHONE", "Retry", "loadCatalog"}
 	for _, check := range checks {
 		if !strings.Contains(body, check) {
 			t.Fatalf("expected asset body to contain %q", check)

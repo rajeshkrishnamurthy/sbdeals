@@ -7,6 +7,7 @@ type CatalogItem = {
   originalPriceText?: string;
   discountText?: string;
   reserveButtonLabel: string;
+  whatsAppMessage: string;
 };
 
 type CatalogRail = {
@@ -20,8 +21,21 @@ type CatalogResponse = {
   rails: CatalogRail[];
 };
 
+type ClickedCreatePayload = {
+  itemId: number;
+  itemType: string;
+  itemTitle: string;
+  sourcePage: string;
+  sourceRailId: number;
+  sourceRailTitle: string;
+};
+
 const root = document.getElementById("catalog-root") as HTMLDivElement | null;
 const toast = document.getElementById("catalog-toast") as HTMLDivElement | null;
+const WHATSAPP_PHONE = "918951395971";
+const CTA_TOAST_MESSAGE = "Connecting to WhatsApp...";
+const CTA_DEBOUNCE_MS = 1200;
+const ctaDebounceUntil = new Map<string, number>();
 
 const setRootState = (className: string): void => {
   if (!root) {
@@ -54,7 +68,53 @@ const appendText = (tagName: string, className: string, text: string): HTMLEleme
   return node;
 };
 
-const createCard = (item: CatalogItem): HTMLElement => {
+const createWhatsAppIcon = (): SVGElement => {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("class", "cta-icon");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "M12 2.25c-5.385 0-9.75 4.21-9.75 9.403 0 1.82.542 3.511 1.478 4.942L2.25 21.75l5.374-1.43A9.93 9.93 0 0 0 12 21.05c5.385 0 9.75-4.21 9.75-9.397C21.75 6.46 17.385 2.25 12 2.25Zm0 17.15a7.98 7.98 0 0 1-3.971-1.05l-.285-.165-3.188.845.857-3.04-.188-.3a7.2 7.2 0 0 1-1.125-3.89c0-3.99 3.496-7.234 7.9-7.234 4.404 0 7.9 3.244 7.9 7.234 0 3.99-3.496 7.234-7.9 7.234Zm3.497-5.39c-.19-.09-1.121-.544-1.295-.605-.173-.06-.3-.09-.427.09-.127.18-.49.605-.601.73-.11.12-.221.136-.41.045-.19-.09-.8-.28-1.523-.891-.563-.477-.943-1.066-1.053-1.246-.11-.18-.012-.277.083-.367.086-.081.19-.211.284-.317.095-.105.126-.18.19-.3.063-.12.031-.226-.016-.317-.047-.09-.427-1.022-.585-1.4-.154-.368-.311-.318-.427-.324l-.364-.006c-.126 0-.332.045-.506.225-.173.18-.664.647-.664 1.577s.68 1.83.775 1.956c.095.126 1.34 2.072 3.247 2.906.454.194.807.31 1.083.397.455.145.87.124 1.197.075.365-.054 1.122-.458 1.28-.899.157-.44.157-.817.11-.898-.047-.081-.173-.126-.364-.216Z");
+  path.setAttribute("fill", "currentColor");
+  svg.appendChild(path);
+  return svg;
+};
+
+const reserveDebounceKey = (rail: CatalogRail, item: CatalogItem): string => `${rail.id}:${item.type}:${item.id}`;
+
+const shouldSuppressCTA = (key: string): boolean => {
+  const now = Date.now();
+  const until = ctaDebounceUntil.get(key) ?? 0;
+  if (until > now) {
+    return true;
+  }
+  ctaDebounceUntil.set(key, now + CTA_DEBOUNCE_MS);
+  return false;
+};
+
+const createClicked = async (payload: ClickedCreatePayload): Promise<void> => {
+  const response = await fetch("/api/clicked", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    keepalive: true,
+  });
+  if (!response.ok) {
+    throw new Error("clicked create failed");
+  }
+};
+
+const waitShort = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+
+const openWhatsApp = (message: string): void => {
+  const url = `https://wa.me/${WHATSAPP_PHONE}?text=${encodeURIComponent(message)}`;
+  window.open(url, "_blank", "noopener");
+};
+
+const createCard = (item: CatalogItem, rail: CatalogRail): HTMLElement => {
   const article = document.createElement("article");
   article.className = "catalog-card";
 
@@ -86,9 +146,30 @@ const createCard = (item: CatalogItem): HTMLElement => {
   const cta = document.createElement("button");
   cta.className = "cta";
   cta.type = "button";
-  cta.textContent = item.reserveButtonLabel;
+  const ctaContent = document.createElement("span");
+  ctaContent.className = "cta-content";
+  ctaContent.appendChild(createWhatsAppIcon());
+  ctaContent.appendChild(appendText("span", "", item.reserveButtonLabel));
+  cta.appendChild(ctaContent);
   cta.addEventListener("click", () => {
-    showToast("Coming soon");
+    const key = reserveDebounceKey(rail, item);
+    if (shouldSuppressCTA(key)) {
+      return;
+    }
+
+    showToast(CTA_TOAST_MESSAGE);
+    const payload: ClickedCreatePayload = {
+      itemId: item.id,
+      itemType: item.type,
+      itemTitle: item.title,
+      sourcePage: "catalog",
+      sourceRailId: rail.id,
+      sourceRailTitle: rail.title,
+    };
+    const clickedPromise = createClicked(payload).catch(() => undefined);
+    void Promise.race([clickedPromise, waitShort(250)]).finally(() => {
+      openWhatsApp(item.whatsAppMessage);
+    });
   });
   article.appendChild(cta);
 
@@ -116,7 +197,7 @@ const createRail = (rail: CatalogRail): HTMLElement => {
   const row = document.createElement("div");
   row.className = "rail-row";
   for (const item of rail.items) {
-    row.appendChild(createCard(item));
+    row.appendChild(createCard(item, rail));
   }
   section.appendChild(row);
   return section;

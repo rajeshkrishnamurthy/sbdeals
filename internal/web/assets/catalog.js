@@ -1,5 +1,9 @@
 const root = document.getElementById("catalog-root");
 const toast = document.getElementById("catalog-toast");
+const WHATSAPP_PHONE = "918951395971";
+const CTA_TOAST_MESSAGE = "Connecting to WhatsApp...";
+const CTA_DEBOUNCE_MS = 1200;
+const ctaDebounceUntil = new Map();
 const setRootState = (className) => {
     if (!root) {
         return;
@@ -38,7 +42,35 @@ const createWhatsAppIcon = () => {
     svg.appendChild(path);
     return svg;
 };
-const createCard = (item) => {
+const reserveDebounceKey = (rail, item) => `${rail.id}:${item.type}:${item.id}`;
+const shouldSuppressCTA = (key) => {
+    const now = Date.now();
+    const until = ctaDebounceUntil.get(key) ?? 0;
+    if (until > now) {
+        return true;
+    }
+    ctaDebounceUntil.set(key, now + CTA_DEBOUNCE_MS);
+    return false;
+};
+const createClicked = async (payload) => {
+    const response = await fetch("/api/clicked", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        keepalive: true,
+    });
+    if (!response.ok) {
+        throw new Error("clicked create failed");
+    }
+};
+const waitShort = (ms) => new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+});
+const openWhatsApp = (message) => {
+    const url = `https://wa.me/${WHATSAPP_PHONE}?text=${encodeURIComponent(message)}`;
+    window.open(url, "_blank", "noopener");
+};
+const createCard = (item, rail) => {
     const article = document.createElement("article");
     article.className = "catalog-card";
     const media = document.createElement("div");
@@ -73,7 +105,23 @@ const createCard = (item) => {
     ctaContent.appendChild(appendText("span", "", item.reserveButtonLabel));
     cta.appendChild(ctaContent);
     cta.addEventListener("click", () => {
-        showToast("Coming soon");
+        const key = reserveDebounceKey(rail, item);
+        if (shouldSuppressCTA(key)) {
+            return;
+        }
+        showToast(CTA_TOAST_MESSAGE);
+        const payload = {
+            itemId: item.id,
+            itemType: item.type,
+            itemTitle: item.title,
+            sourcePage: "catalog",
+            sourceRailId: rail.id,
+            sourceRailTitle: rail.title,
+        };
+        const clickedPromise = createClicked(payload).catch(() => undefined);
+        void Promise.race([clickedPromise, waitShort(250)]).finally(() => {
+            openWhatsApp(item.whatsAppMessage);
+        });
     });
     article.appendChild(cta);
     return article;
@@ -96,7 +144,7 @@ const createRail = (rail) => {
     const row = document.createElement("div");
     row.className = "rail-row";
     for (const item of rail.items) {
-        row.appendChild(createCard(item));
+        row.appendChild(createCard(item, rail));
     }
     section.appendChild(row);
     return section;
