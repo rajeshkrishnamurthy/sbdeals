@@ -23,22 +23,21 @@ Implement as separate features to reduce Codex error surface and improve QA isol
   - open WhatsApp with prefilled message
 - Handle failure paths gracefully (e.g., WhatsApp unavailable).
 
-### Feature 02 — Non-WhatsApp fallback capture
-- Provide fallback path when WhatsApp cannot be used.
-- Capture name + phone (+ optional note).
-- Create Interested record directly from fallback submission.
-
-### Feature 03 — Admin Clicked → Interested conversion
+### Feature 02 — Admin Clicked → Interested conversion
 - Admin view for Clicked records (recent-first baseline).
 - Convert Clicked to Interested with required buyer details.
 - Preserve audit timestamps and source traceability.
 
-### Feature 04 — Reservation stock side effects
+### Feature 03 - Reservation stock side effects
 - On transition to Interested:
   - set item In-stock = No
   - enforce catalog hiding rules
 - Define reversible behavior for cancellation/restoration (exact rule to be locked during feature spec).
 
+### Feature 04 — Non-WhatsApp fallback capture
+- Provide fallback path when WhatsApp cannot be used.
+- Capture name + phone (+ optional note).
+- Create Interested record directly from fallback submission.
 ---
 
 ## In Scope (sprint-level)
@@ -75,8 +74,8 @@ Implement as separate features to reduce Codex error surface and improve QA isol
 
 ## Execution Order (locked for current planning)
 1. Feature 01 (CTA + Clicked)
-2. Feature 03 (Admin conversion)
-3. Feature 04 (Interested side effects: stock + catalog visibility)
-4. Feature 02 (fallback path)
+2. Feature 02 (Admin conversion)
+3. Feature 03 (Interested side effects: stock + catalog visibility)
+4. Feature 04 (fallback path)
 
 Rationale: lock canonical Interested transition behavior (including side effects) before implementing alternate Interested-entry paths (fallback).
