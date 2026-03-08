@@ -59,6 +59,7 @@ func NewServerWithStores(store suppliers.Store, bookStore books.Store, bundleSto
 	}
 
 	s.mux.HandleFunc("/", s.handleRoot)
+	s.mux.HandleFunc("/api/catalog", s.handleCatalogData)
 	s.mux.HandleFunc("/admin/suppliers", s.handleSuppliersCollection)
 	s.mux.HandleFunc("/admin/suppliers/new", s.handleSupplierNew)
 	s.mux.HandleFunc("/admin/suppliers/", s.handleSupplierItem)
@@ -74,6 +75,7 @@ func NewServerWithStores(store suppliers.Store, bookStore books.Store, bundleSto
 	s.mux.HandleFunc("/assets/books-form.js", s.handleBooksFormJSAsset)
 	s.mux.HandleFunc("/assets/bundles-form.js", s.handleBundlesFormJSAsset)
 	s.mux.HandleFunc("/assets/rails-form.js", s.handleRailsFormJSAsset)
+	s.mux.HandleFunc("/assets/catalog.js", s.handleCatalogJSAsset)
 
 	return s
 }
@@ -87,7 +89,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	http.Redirect(w, r, "/admin/suppliers", http.StatusSeeOther)
+	s.renderCatalogPage(w, r)
 }
 
 func (s *Server) handleSuppliersCollection(w http.ResponseWriter, r *http.Request) {
