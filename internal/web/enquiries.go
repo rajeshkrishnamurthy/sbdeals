@@ -174,12 +174,14 @@ var enquiriesListTemplate = template.Must(template.New("enquiries-list").Funcs(t
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Enquiries</title>
   <style>
-    body { font-family: "Segoe UI", sans-serif; background:#f6f7fb; margin:0; color:#1f2937; }
-    .container { max-width:1120px; margin:30px auto; padding:0 20px; }
-    .shell { margin-bottom:16px; }
-    .admin-nav { display:flex; gap:10px; flex-wrap:wrap; }
-    .admin-nav-link { text-decoration:none; color:#1f2937; background:#e5e7eb; padding:8px 12px; border-radius:8px; font-weight:600; }
-    .admin-nav-link.active { background:#0f766e; color:#fff; }
+    :root { --bg:#f6f8fb; --card:#fff; --line:#d9e1ea; --text:#1f2937; --accent:#0f766e; --muted:#4b5563; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: "Segoe UI", Tahoma, sans-serif; background: var(--bg); color: var(--text); }
+    header { background: var(--card); border-bottom:1px solid var(--line); }
+    .shell { width:min(1100px, 94vw); margin:0 auto; padding:16px; }
+    .admin-nav { display:flex; gap:14px; }
+    .admin-nav-link { color: var(--accent); font-weight:600; text-decoration:none; padding:6px 10px; border-radius:8px; }
+    .admin-nav-link.active { background:#e6f4f2; color:#0a5f57; }
     .header { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:16px; }
     h1 { margin:0; font-size:1.8rem; }
     .tabs { display:flex; gap:8px; margin-bottom:16px; }
@@ -202,8 +204,10 @@ var enquiriesListTemplate = template.Must(template.New("enquiries-list").Funcs(t
   </style>
 </head>
 <body>
-  <div class="container">
+  <header>
     <div class="shell">{{adminNav .ActiveSection}}</div>
+  </header>
+  <main class="shell">
     <div class="header">
       <h1>Enquiries</h1>
     </div>
@@ -272,6 +276,6 @@ var enquiriesListTemplate = template.Must(template.New("enquiries-list").Funcs(t
         {{end}}
       </tbody>
     </table>
-  </div>
+  </main>
 </body>
 </html>`))
