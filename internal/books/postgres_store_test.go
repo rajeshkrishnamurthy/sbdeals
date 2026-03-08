@@ -18,9 +18,10 @@ func TestPostgresStoreList(t *testing.T) {
 	defer db.Close()
 
 	rows := sqlmock.NewRows([]string{"id", "title", "author", "category", "my_price", "in_stock", "has_cover", "is_published", "published_at", "unpublished_at"}).
-		AddRow(1, "The Hobbit", "Tolkien", "Fiction", 299.0, true, true, false, nil, time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC))
+		AddRow(1, "The Hobbit", "Tolkien", "Fiction", 299.0, true, true, false, nil, time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC)).
+		AddRow(2, "Legacy Row", "Anon", "Fiction", 199.0, true, false, false, nil, nil)
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, title, author, category, my_price, in_stock, OCTET_LENGTH(cover_image) > 0 AS has_cover, is_published, published_at, unpublished_at FROM books ORDER BY id ASC`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, title, author, category, my_price, in_stock, COALESCE(OCTET_LENGTH(cover_image), 0) > 0 AS has_cover, is_published, published_at, unpublished_at FROM books ORDER BY id ASC`)).
 		WillReturnRows(rows)
 
 	store := NewPostgresStore(db)
@@ -28,11 +29,14 @@ func TestPostgresStoreList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list returned error: %v", err)
 	}
-	if len(items) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(items))
+	if len(items) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(items))
 	}
 	if !items[0].HasCover || items[0].Title != "The Hobbit" {
 		t.Fatalf("unexpected list row: %+v", items[0])
+	}
+	if items[1].HasCover {
+		t.Fatalf("expected second row has_cover=false, got %+v", items[1])
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -107,6 +111,9 @@ func TestPostgresStoreGetCoverAndSetInStock(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT cover_image, cover_mime_type FROM books WHERE id = $1`)).
 		WithArgs(10).
 		WillReturnRows(sqlmock.NewRows([]string{"cover_image", "cover_mime_type"}).AddRow([]byte("cover-bytes"), "image/png"))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT cover_image, cover_mime_type FROM books WHERE id = $1`)).
+		WithArgs(11).
+		WillReturnRows(sqlmock.NewRows([]string{"cover_image", "cover_mime_type"}).AddRow(nil, "image/png"))
 
 	setStockQuery := `UPDATE books SET in_stock = $1, updated_at = NOW() WHERE id = $2 RETURNING id, title, supplier_id, cover_mime_type, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, is_published, published_at, unpublished_at`
 	mock.ExpectQuery(regexp.QuoteMeta(setStockQuery)).
@@ -121,6 +128,10 @@ func TestPostgresStoreGetCoverAndSetInStock(t *testing.T) {
 	}
 	if cover.MimeType != "image/png" {
 		t.Fatalf("unexpected mime type: %q", cover.MimeType)
+	}
+	_, err = store.GetCover(11)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for null cover bytes, got %v", err)
 	}
 
 	book, err := store.SetInStock(10, false)

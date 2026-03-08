@@ -16,7 +16,7 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 }
 
 func (s *PostgresStore) List() ([]ListItem, error) {
-	rows, err := s.db.QueryContext(context.Background(), `SELECT id, title, author, category, my_price, in_stock, OCTET_LENGTH(cover_image) > 0 AS has_cover, is_published, published_at, unpublished_at FROM books ORDER BY id ASC`)
+	rows, err := s.db.QueryContext(context.Background(), `SELECT id, title, author, category, my_price, in_stock, COALESCE(OCTET_LENGTH(cover_image), 0) > 0 AS has_cover, is_published, published_at, unpublished_at FROM books ORDER BY id ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -81,6 +81,9 @@ func (s *PostgresStore) GetCover(id int) (Cover, error) {
 			return Cover{}, ErrNotFound
 		}
 		return Cover{}, err
+	}
+	if len(cover.Data) == 0 {
+		return Cover{}, ErrNotFound
 	}
 	return cover, nil
 }
