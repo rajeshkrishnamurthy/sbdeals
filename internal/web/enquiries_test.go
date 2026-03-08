@@ -112,6 +112,65 @@ func TestConvertEnquiryValidation(t *testing.T) {
 	}
 }
 
+func TestConvertEnquiryNotFoundReturns404(t *testing.T) {
+	clickedStore := clicked.NewMemoryStore()
+	server := newEnquiriesTestServer(clickedStore)
+
+	form := url.Values{}
+	form.Set("buyer_name", "Rajesh")
+	form.Set("buyer_phone", "9876543210")
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/admin/enquiries/999/convert", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+}
+
+func TestEnquiryItemMethodGuard(t *testing.T) {
+	clickedStore := clicked.NewMemoryStore()
+	server := newEnquiriesTestServer(clickedStore)
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/admin/enquiries/1/convert", nil)
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rr.Code)
+	}
+}
+
+func TestEnquiriesInterestedTabRendersConvertedRows(t *testing.T) {
+	clickedStore := clicked.NewMemoryStore()
+	created, _ := clickedStore.CreateClicked(clicked.CreateInput{
+		ItemID:     8,
+		ItemType:   clicked.ItemTypeBundle,
+		ItemTitle:  "Bundle Eight",
+		SourcePage: "catalog",
+	})
+	_, _, _ = clickedStore.ConvertToInterested(created.ID, clicked.ConvertInput{
+		BuyerName:   "Rajesh",
+		BuyerPhone:  "+919876543210",
+		BuyerNote:   "note",
+		ConvertedBy: "system-admin",
+	})
+
+	server := newEnquiriesTestServer(clickedStore)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/admin/enquiries?status=interested", nil)
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Bundle Eight") || !strings.Contains(body, "919876543210") {
+		t.Fatalf("expected interested row details in body, got: %s", body)
+	}
+}
+
 func newEnquiriesTestServer(clickedStore clicked.Store) *Server {
 	return NewServerWithStoresAndClicked(
 		suppliers.NewMemoryStore(),

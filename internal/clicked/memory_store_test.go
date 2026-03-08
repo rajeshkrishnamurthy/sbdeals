@@ -69,3 +69,12 @@ func TestNormalizeIndiaPhone(t *testing.T) {
 		t.Fatalf("expected invalid starting digit")
 	}
 }
+
+func TestStatusAndItemTypeValidation(t *testing.T) {
+	if !IsValidItemType(ItemTypeBook) || !IsValidItemType(ItemTypeBundle) || IsValidItemType(ItemType("X")) {
+		t.Fatalf("unexpected item-type validation behavior")
+	}
+	if !IsValidStatus(StatusClicked) || !IsValidStatus(StatusInterested) || IsValidStatus(Status("unknown")) {
+		t.Fatalf("unexpected status validation behavior")
+	}
+}
