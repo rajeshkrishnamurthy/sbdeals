@@ -869,15 +869,26 @@ func filterRailItems(items []railItemOption, filters railPickerFilterCriteria, r
 }
 
 func railItemMatchesFilters(item railItemOption, filters railPickerFilterCriteria, railType rails.RailType) bool {
+	if !matchesCommonRailItemFilters(item, filters) {
+		return false
+	}
+	if railType != rails.RailTypeBundle {
+		return true
+	}
+	return matchesBundleRailItemFilters(item, filters)
+}
+
+func matchesCommonRailItemFilters(item railItemOption, filters railPickerFilterCriteria) bool {
 	if filters.Query != "" && !strings.Contains(strings.ToLower(item.Title), filters.Query) {
 		return false
 	}
 	if filters.Category != "" && item.Category != filters.Category {
 		return false
 	}
-	if railType != rails.RailTypeBundle {
-		return true
-	}
+	return true
+}
+
+func matchesBundleRailItemFilters(item railItemOption, filters railPickerFilterCriteria) bool {
 	if filters.PriceMin != nil && filters.PriceMax != nil && (item.Price < *filters.PriceMin || item.Price > *filters.PriceMax) {
 		return false
 	}

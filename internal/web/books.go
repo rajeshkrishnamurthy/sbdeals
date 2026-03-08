@@ -93,45 +93,65 @@ func (s *Server) handleBookItem(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleBookItemAction(w http.ResponseWriter, r *http.Request, id int, action string) bool {
 	switch action {
 	case "cover":
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w, http.MethodGet)
-			return true
-		}
-		s.serveBookCover(w, r, id)
+		s.handleBookCoverAction(w, r, id)
 		return true
 	case "stock":
-		if r.Method != http.MethodPost {
-			writeMethodNotAllowed(w, http.MethodPost)
-			return true
-		}
-		s.updateBookInStockInline(w, r, id)
+		s.handleBookStockAction(w, r, id)
 		return true
 	case "publish":
-		if r.Method != http.MethodPost && r.Method != http.MethodPatch {
-			writeMethodNotAllowed(w, http.MethodPost, http.MethodPatch)
-			return true
-		}
-		s.publishBook(w, r, id)
+		s.handleBookPublishAction(w, r, id)
 		return true
 	case "unpublish":
-		if r.Method != http.MethodPost && r.Method != http.MethodPatch {
-			writeMethodNotAllowed(w, http.MethodPost, http.MethodPatch)
-			return true
-		}
-		s.unpublishBook(w, r, id)
+		s.handleBookUnpublishAction(w, r, id)
 		return true
 	case "":
-		switch r.Method {
-		case http.MethodGet:
-			s.renderBookDetail(w, r, id)
-		case http.MethodPost:
-			s.updateBook(w, r, id)
-		default:
-			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
-		}
+		s.handleBookDetailAction(w, r, id)
 		return true
 	}
 	return false
+}
+
+func (s *Server) handleBookCoverAction(w http.ResponseWriter, r *http.Request, id int) {
+	if !methodAllowed(r.Method, http.MethodGet) {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	s.serveBookCover(w, r, id)
+}
+
+func (s *Server) handleBookStockAction(w http.ResponseWriter, r *http.Request, id int) {
+	if !methodAllowed(r.Method, http.MethodPost) {
+		writeMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	s.updateBookInStockInline(w, r, id)
+}
+
+func (s *Server) handleBookPublishAction(w http.ResponseWriter, r *http.Request, id int) {
+	if !methodAllowed(r.Method, http.MethodPost, http.MethodPatch) {
+		writeMethodNotAllowed(w, http.MethodPost, http.MethodPatch)
+		return
+	}
+	s.publishBook(w, r, id)
+}
+
+func (s *Server) handleBookUnpublishAction(w http.ResponseWriter, r *http.Request, id int) {
+	if !methodAllowed(r.Method, http.MethodPost, http.MethodPatch) {
+		writeMethodNotAllowed(w, http.MethodPost, http.MethodPatch)
+		return
+	}
+	s.unpublishBook(w, r, id)
+}
+
+func (s *Server) handleBookDetailAction(w http.ResponseWriter, r *http.Request, id int) {
+	switch r.Method {
+	case http.MethodGet:
+		s.renderBookDetail(w, r, id)
+	case http.MethodPost:
+		s.updateBook(w, r, id)
+	default:
+		writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+	}
 }
 
 func (s *Server) renderBooksList(w http.ResponseWriter, r *http.Request) {
@@ -537,6 +557,15 @@ func validateBookForm(input bookFormInput, suppliersList []suppliers.Supplier, r
 	result := parsedBookForm{Title: input.Title, Category: input.Category, Format: input.Format, Condition: input.Condition, Author: input.Author, Notes: input.Notes, InStock: true}
 	errs := map[string]string{}
 
+	validateBookIdentity(input, suppliersList, requireCover, coverProvided, &result, errs)
+	validateBookClassification(input, errs)
+	validateBookPricing(input, &result, errs)
+	validateBookStock(input, requireInStock, &result, errs)
+
+	return result, errs
+}
+
+func validateBookIdentity(input bookFormInput, suppliersList []suppliers.Supplier, requireCover bool, coverProvided bool, result *parsedBookForm, errs map[string]string) {
 	if input.Title == "" {
 		errs["title"] = "Title is required."
 	}
@@ -550,12 +579,15 @@ func validateBookForm(input bookFormInput, suppliersList []suppliers.Supplier, r
 	} else {
 		result.SupplierID = supplierID
 	}
+
 	if boxSetValue, ok := parseYesNo(input.IsBoxSet); ok {
 		result.IsBoxSet = boxSetValue
 	} else {
 		errs["is_box_set"] = "Please choose a valid Box Set value."
 	}
+}
 
+func validateBookClassification(input bookFormInput, errs map[string]string) {
 	if errText := validateOption(input.Category, bookCategoryOptions, "Category is required.", "Please choose a valid category."); errText != "" {
 		errs["category"] = errText
 	}
@@ -565,7 +597,9 @@ func validateBookForm(input bookFormInput, suppliersList []suppliers.Supplier, r
 	if errText := validateOption(input.Condition, bookConditionOptions, "Book condition is required.", "Please choose a valid condition."); errText != "" {
 		errs["condition"] = errText
 	}
+}
 
+func validateBookPricing(input bookFormInput, result *parsedBookForm, errs map[string]string) {
 	mrp, mrpErr := parseNonNegativeNumber(input.MRP, true)
 	if mrpErr != "" {
 		errs["mrp"] = "MRP is required and must be a non-negative number."
@@ -586,16 +620,17 @@ func validateBookForm(input bookFormInput, suppliersList []suppliers.Supplier, r
 	} else {
 		result.BundlePrice = bundlePrice
 	}
+}
 
-	if requireInStock {
-		if value, ok := parseStockValue(input.InStock); ok {
-			result.InStock = value
-		} else {
-			errs["in_stock"] = "Please choose a valid in-stock value."
-		}
+func validateBookStock(input bookFormInput, requireInStock bool, result *parsedBookForm, errs map[string]string) {
+	if !requireInStock {
+		return
 	}
-
-	return result, errs
+	if value, ok := parseStockValue(input.InStock); ok {
+		result.InStock = value
+		return
+	}
+	errs["in_stock"] = "Please choose a valid in-stock value."
 }
 
 func validateOption(value string, allowed []string, emptyMsg string, invalidMsg string) string {

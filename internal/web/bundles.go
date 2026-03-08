@@ -78,34 +78,50 @@ func (s *Server) handleBundleItem(w http.ResponseWriter, r *http.Request) {
 
 	switch action {
 	case "image":
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w, http.MethodGet)
-			return
-		}
-		s.serveBundleImage(w, r, bundleID)
+		s.handleBundleImageAction(w, r, bundleID)
 	case "publish":
-		if r.Method != http.MethodPost && r.Method != http.MethodPatch {
-			writeMethodNotAllowed(w, http.MethodPost, http.MethodPatch)
-			return
-		}
-		s.publishBundle(w, r, bundleID)
+		s.handleBundlePublishAction(w, r, bundleID)
 	case "unpublish":
-		if r.Method != http.MethodPost && r.Method != http.MethodPatch {
-			writeMethodNotAllowed(w, http.MethodPost, http.MethodPatch)
-			return
-		}
-		s.unpublishBundle(w, r, bundleID)
+		s.handleBundleUnpublishAction(w, r, bundleID)
 	case "":
-		switch r.Method {
-		case http.MethodGet:
-			s.renderBundleDetail(w, r, bundleID)
-		case http.MethodPost:
-			s.updateBundle(w, r, bundleID)
-		default:
-			writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
-		}
+		s.handleBundleDetailAction(w, r, bundleID)
 	default:
 		http.NotFound(w, r)
+	}
+}
+
+func (s *Server) handleBundleImageAction(w http.ResponseWriter, r *http.Request, bundleID int) {
+	if !methodAllowed(r.Method, http.MethodGet) {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	s.serveBundleImage(w, r, bundleID)
+}
+
+func (s *Server) handleBundlePublishAction(w http.ResponseWriter, r *http.Request, bundleID int) {
+	if !methodAllowed(r.Method, http.MethodPost, http.MethodPatch) {
+		writeMethodNotAllowed(w, http.MethodPost, http.MethodPatch)
+		return
+	}
+	s.publishBundle(w, r, bundleID)
+}
+
+func (s *Server) handleBundleUnpublishAction(w http.ResponseWriter, r *http.Request, bundleID int) {
+	if !methodAllowed(r.Method, http.MethodPost, http.MethodPatch) {
+		writeMethodNotAllowed(w, http.MethodPost, http.MethodPatch)
+		return
+	}
+	s.unpublishBundle(w, r, bundleID)
+}
+
+func (s *Server) handleBundleDetailAction(w http.ResponseWriter, r *http.Request, bundleID int) {
+	switch r.Method {
+	case http.MethodGet:
+		s.renderBundleDetail(w, r, bundleID)
+	case http.MethodPost:
+		s.updateBundle(w, r, bundleID)
+	default:
+		writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
 }
 
