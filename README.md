@@ -31,6 +31,8 @@ Start app + Postgres:
 docker compose up -d --build
 ```
 
+The compose stack now runs a one-shot `migrate` service first; `app` starts only after migrations complete successfully.
+
 If port `8080` is already in use locally:
 
 ```bash

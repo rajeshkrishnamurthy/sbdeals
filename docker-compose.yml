@@ -1,4 +1,17 @@
 services:
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sbd-migrate
+    restart: "no"
+    environment:
+      DATABASE_URL: postgres://sbd:sbd@postgres:5432/sbd?sslmode=disable
+    command: ["sbd-migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   app:
     build:
       context: .
@@ -10,8 +23,8 @@ services:
     ports:
       - "${APP_PORT:-8080}:8080"
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   postgres:
     image: postgres:16-alpine
