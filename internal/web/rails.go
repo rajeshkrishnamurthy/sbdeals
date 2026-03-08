@@ -830,9 +830,10 @@ func (s *Server) loadBundleRailItems() ([]railItemOption, error) {
 		if err != nil {
 			return nil, err
 		}
-		thumbnailURL, hasThumbnail, err := s.bundleThumbnailURL(bundleItem.BookIDs)
-		if err != nil {
-			return nil, err
+		thumbnailURL := ""
+		hasThumbnail := strings.TrimSpace(bundleItem.ImageMimeType) != ""
+		if hasThumbnail {
+			thumbnailURL = fmt.Sprintf("/admin/bundles/%d/image", bundleItem.ID)
 		}
 		out = append(out, railItemOption{
 			ID:           item.ID,
@@ -846,22 +847,6 @@ func (s *Server) loadBundleRailItems() ([]railItemOption, error) {
 	}
 	sortRailItems(out)
 	return out, nil
-}
-
-func (s *Server) bundleThumbnailURL(bookIDs []int) (string, bool, error) {
-	for _, bookID := range bookIDs {
-		book, err := s.bookStore.Get(bookID)
-		if errors.Is(err, books.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return "", false, err
-		}
-		if strings.TrimSpace(book.CoverMimeType) != "" {
-			return fmt.Sprintf("/admin/books/%d/cover", book.ID), true, nil
-		}
-	}
-	return "", false, nil
 }
 
 func bundleDiscountPct(bundle bundles.Bundle) float64 {

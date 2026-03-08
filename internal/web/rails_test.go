@@ -135,6 +135,28 @@ func TestRailEditKeepsTypeImmutableAndSupportsPublishRecency(t *testing.T) {
 	}
 }
 
+func TestBundleRailDetailUsesBundleImageThumbnail(t *testing.T) {
+	s, railStore, _, _, _ := newRailsFixture(t)
+	rail, err := railStore.Create(rails.CreateInput{Title: "Bundle Rail", Type: rails.RailTypeBundle})
+	if err != nil {
+		t.Fatalf("create rail: %v", err)
+	}
+	if _, err := railStore.AddItem(rail.ID, 1); err != nil {
+		t.Fatalf("add bundle item: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/admin/rails/"+strconv.Itoa(rail.ID), nil)
+	s.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), `/admin/bundles/1/image`) {
+		t.Fatalf("expected bundle image thumbnail in rail detail")
+	}
+}
+
 func TestRailPublishUnpublishAndMoveOrdering(t *testing.T) {
 	s, railStore, _, _, _ := newRailsFixture(t)
 	first, err := railStore.Create(rails.CreateInput{Title: "First", Type: rails.RailTypeBook})
@@ -492,6 +514,7 @@ func newRailsFixture(t *testing.T) (*Server, *rails.MemoryStore, *books.MemorySt
 		AllowedConditions: []string{"Very good"},
 		BookIDs:           []int{10, 11},
 		BundlePrice:       320,
+		Image:             bundles.Image{Data: []byte("bundle-one"), MimeType: "image/png"},
 	}); err != nil {
 		t.Fatalf("create bundle one failed: %v", err)
 	}
@@ -502,6 +525,7 @@ func newRailsFixture(t *testing.T) (*Server, *rails.MemoryStore, *books.MemorySt
 		AllowedConditions: []string{"Very good"},
 		BookIDs:           []int{10, 11},
 		BundlePrice:       300,
+		Image:             bundles.Image{Data: []byte("bundle-two"), MimeType: "image/png"},
 	}); err != nil {
 		t.Fatalf("create bundle two failed: %v", err)
 	}
@@ -512,6 +536,7 @@ func newRailsFixture(t *testing.T) (*Server, *rails.MemoryStore, *books.MemorySt
 		AllowedConditions: []string{"Very good"},
 		BookIDs:           []int{12, 13},
 		BundlePrice:       220,
+		Image:             bundles.Image{Data: []byte("bundle-three"), MimeType: "image/png"},
 	}); err != nil {
 		t.Fatalf("create bundle three failed: %v", err)
 	}
