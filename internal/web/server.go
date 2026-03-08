@@ -81,6 +81,8 @@ func NewServerWithStoresAndClicked(store suppliers.Store, bookStore books.Store,
 	s.mux.HandleFunc("/admin/rails", s.handleRailsCollection)
 	s.mux.HandleFunc("/admin/rails/new", s.handleRailNew)
 	s.mux.HandleFunc("/admin/rails/", s.handleRailItem)
+	s.mux.HandleFunc("/admin/enquiries", s.handleEnquiriesCollection)
+	s.mux.HandleFunc("/admin/enquiries/", s.handleEnquiryItem)
 	s.mux.HandleFunc("/assets/books-form.js", s.handleBooksFormJSAsset)
 	s.mux.HandleFunc("/assets/bundles-form.js", s.handleBundlesFormJSAsset)
 	s.mux.HandleFunc("/assets/rails-form.js", s.handleRailsFormJSAsset)

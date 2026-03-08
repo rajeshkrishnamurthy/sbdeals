@@ -31,12 +31,12 @@ func (s *Server) handleClickedCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	itemType := clicked.ItemType(strings.TrimSpace(req.ItemType))
-	if req.ItemID <= 0 || strings.TrimSpace(req.ItemTitle) == "" || strings.TrimSpace(req.SourcePage) == "" || !isValidClickedItemType(itemType) {
+	if req.ItemID <= 0 || strings.TrimSpace(req.ItemTitle) == "" || strings.TrimSpace(req.SourcePage) == "" || !clicked.IsValidItemType(itemType) {
 		http.Error(w, "invalid clicked payload", http.StatusBadRequest)
 		return
 	}
 
-	_, err := s.clickedStore.Create(clicked.CreateInput{
+	_, err := s.clickedStore.CreateClicked(clicked.CreateInput{
 		ItemID:       req.ItemID,
 		ItemType:     itemType,
 		ItemTitle:    strings.TrimSpace(req.ItemTitle),
@@ -51,8 +51,4 @@ func (s *Server) handleClickedCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusCreated)
-}
-
-func isValidClickedItemType(itemType clicked.ItemType) bool {
-	return itemType == clicked.ItemTypeBook || itemType == clicked.ItemTypeBundle
 }

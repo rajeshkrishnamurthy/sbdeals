@@ -8,21 +8,21 @@ import (
 type MemoryStore struct {
 	mu     sync.Mutex
 	nextID int
-	items  []Event
+	items  []Enquiry
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		nextID: 1,
-		items:  make([]Event, 0),
+		items:  make([]Enquiry, 0),
 	}
 }
 
-func (s *MemoryStore) Create(input CreateInput) (Event, error) {
+func (s *MemoryStore) CreateClicked(input CreateInput) (Enquiry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	event := Event{
+	item := Enquiry{
 		ID:           s.nextID,
 		ItemID:       input.ItemID,
 		ItemType:     input.ItemType,
@@ -30,9 +30,65 @@ func (s *MemoryStore) Create(input CreateInput) (Event, error) {
 		SourcePage:   input.SourcePage,
 		SourceRailID: input.SourceRailID,
 		SourceRail:   input.SourceRail,
+		Status:       StatusClicked,
 		CreatedAt:    time.Now().UTC(),
 	}
 	s.nextID++
-	s.items = append(s.items, event)
-	return event, nil
+	s.items = append(s.items, item)
+	return cloneEnquiry(item), nil
+}
+
+func (s *MemoryStore) ListByStatus(status Status) ([]Enquiry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	out := make([]Enquiry, 0)
+	for i := len(s.items) - 1; i >= 0; i-- {
+		if s.items[i].Status != status {
+			continue
+		}
+		out = append(out, cloneEnquiry(s.items[i]))
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) ConvertToInterested(id int, input ConvertInput) (Enquiry, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	index := s.indexByID(id)
+	if index < 0 {
+		return Enquiry{}, false, ErrNotFound
+	}
+	current := s.items[index]
+	if current.Status == StatusInterested {
+		return cloneEnquiry(current), true, nil
+	}
+	now := time.Now().UTC()
+	current.Status = StatusInterested
+	current.BuyerName = input.BuyerName
+	current.BuyerPhone = input.BuyerPhone
+	current.BuyerNote = input.BuyerNote
+	current.ConvertedBy = input.ConvertedBy
+	current.ConvertedAt = &now
+	s.items[index] = current
+	return cloneEnquiry(current), false, nil
+}
+
+func (s *MemoryStore) indexByID(id int) int {
+	for i := range s.items {
+		if s.items[i].ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func cloneEnquiry(in Enquiry) Enquiry {
+	out := in
+	if in.ConvertedAt != nil {
+		ts := *in.ConvertedAt
+		out.ConvertedAt = &ts
+	}
+	return out
 }

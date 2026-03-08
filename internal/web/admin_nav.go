@@ -16,6 +16,7 @@ func adminNav(activeSection string) template.HTML {
 		{label: "Books", path: "/admin/books", section: "books"},
 		{label: "Bundles", path: "/admin/bundles", section: "bundles"},
 		{label: "Rails", path: "/admin/rails", section: "rails"},
+		{label: "Enquiries", path: "/admin/enquiries", section: "enquiries"},
 	}
 
 	parts := make([]string, 0, len(items)+2)

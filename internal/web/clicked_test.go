@@ -74,12 +74,20 @@ type clickedStoreStub struct {
 	err     error
 }
 
-func (s *clickedStoreStub) Create(input clicked.CreateInput) (clicked.Event, error) {
+func (s *clickedStoreStub) CreateClicked(input clicked.CreateInput) (clicked.Enquiry, error) {
 	s.created = input
 	if s.err != nil {
-		return clicked.Event{}, s.err
+		return clicked.Enquiry{}, s.err
 	}
-	return clicked.Event{}, nil
+	return clicked.Enquiry{}, nil
+}
+
+func (s *clickedStoreStub) ListByStatus(status clicked.Status) ([]clicked.Enquiry, error) {
+	return nil, nil
+}
+
+func (s *clickedStoreStub) ConvertToInterested(id int, input clicked.ConvertInput) (clicked.Enquiry, bool, error) {
+	return clicked.Enquiry{}, false, nil
 }
 
 func newServerWithClickedStore(clickedStore clicked.Store) *Server {
