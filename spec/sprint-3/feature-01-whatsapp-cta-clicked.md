@@ -6,24 +6,31 @@ Replace placeholder Reserve CTA behavior with real WhatsApp handoff and determin
 ---
 
 ## Decisions Locked (Stage-3)
-1. **WhatsApp prefill content:** Option A (minimal)
-   - Prefill message only includes a simple interest line with item title context.
+1. **Customer CTA wording + affordance:** locked
+   - CTA label: **"I’m interested"**
+   - Show **WhatsApp icon** adjacent to the CTA label to make channel intent explicit.
+
+2. **WhatsApp prefill content:** Option A (minimal)
+   - Prefill message starts with a simple interest line and item context.
+   - Preferred pattern:
+     - Book: `Hi Srikar, I'm interested in this book: {BOOK_TITLE}.`
+     - Bundle: `Hi Srikar, I'm interested in this bundle containing: {BOOK_1}, {BOOK_2}, {BOOK_3}.`
    - Rationale: Srikar will manually engage prospect before conversion; detailed disambiguation can happen in admin via title search.
 
-2. **Clicked linkage model:** Option A
+3. **Clicked linkage model:** Option A
    - Create Clicked on CTA tap.
    - No confirmation flow for whether user actually sent the WhatsApp message.
 
-3. **Clicked API failure behavior:** Option C
+4. **Clicked API failure behavior:** Option C
    - Still proceed with WhatsApp handoff.
    - No user-facing failure interruption for MVP.
    - Backend diagnostics/retry can be handled later.
 
-4. **Duplicate-tap handling:** Option B
+5. **Duplicate-tap handling:** Option B
    - Add simple client-side debounce (short window) to suppress accidental duplicate taps.
    - Keep implementation lightweight (no heavy idempotency system in MVP).
 
-5. **User feedback on tap:** Option B
+6. **User feedback on tap:** Option B
    - Show non-intrusive toast before handoff:
    - **"Connecting to WhatsApp..."**
    - Toast pattern should remain reusable for later messaging (e.g., WhatsApp unavailable guidance).
@@ -48,7 +55,7 @@ Replace placeholder Reserve CTA behavior with real WhatsApp handoff and determin
 ## Functional Requirements
 
 ### 1) CTA Trigger Behavior
-On tapping **Reserve on WhatsApp**:
+On tapping **I’m interested** (with WhatsApp icon):
 1. Show toast: **"Connecting to WhatsApp..."**
 2. Attempt to create Clicked record in backend.
 3. Trigger WhatsApp deep-link with minimal prefilled text.
@@ -78,7 +85,7 @@ Clicked record must capture at least:
 ---
 
 ## Acceptance Criteria
-1. Reserve CTA no longer shows placeholder "Coming soon" behavior.
+1. Primary CTA is now **"I’m interested"** with WhatsApp icon (replacing placeholder behavior).
 2. On CTA tap, toast appears: **"Connecting to WhatsApp..."**.
 3. WhatsApp handoff is attempted from catalog card CTA.
 4. Clicked record is created on CTA tap path (best effort; non-blocking on failure).
