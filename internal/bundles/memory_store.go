@@ -92,13 +92,14 @@ func (s *MemoryStore) Update(id int, input UpdateInput) (Bundle, error) {
 	}
 
 	updated := s.bundleFromInput(id, CreateInput{
-		Name:              input.Name,
-		SupplierID:        input.SupplierID,
-		Category:          input.Category,
-		AllowedConditions: input.AllowedConditions,
-		BookIDs:           input.BookIDs,
-		BundlePrice:       input.BundlePrice,
-		Notes:             input.Notes,
+		Name:                   input.Name,
+		SupplierID:             input.SupplierID,
+		Category:               input.Category,
+		AllowedConditions:      input.AllowedConditions,
+		BookIDs:                input.BookIDs,
+		BundlePrice:            input.BundlePrice,
+		Notes:                  input.Notes,
+		OutOfStockOnInterested: input.OutOfStockOnInterested,
 	})
 	updated.ImageMimeType = s.bundles[index].ImageMimeType
 	if input.Image != nil {
@@ -197,20 +198,22 @@ func (s *MemoryStore) bundleFromInput(id int, input CreateInput) Bundle {
 	now := time.Now().UTC()
 
 	return Bundle{
-		ID:                id,
-		Name:              input.Name,
-		SupplierID:        input.SupplierID,
-		SupplierName:      s.supplierName[input.SupplierID],
-		Category:          input.Category,
-		AllowedConditions: cloneStringSlice(input.AllowedConditions),
-		BundlePrice:       input.BundlePrice,
-		Notes:             input.Notes,
-		BookIDs:           cloneIntSlice(input.BookIDs),
-		Books:             books,
-		ImageMimeType:     input.Image.MimeType,
-		IsPublished:       false,
-		PublishedAt:       nil,
-		UnpublishedAt:     &now,
+		ID:                     id,
+		Name:                   input.Name,
+		SupplierID:             input.SupplierID,
+		SupplierName:           s.supplierName[input.SupplierID],
+		Category:               input.Category,
+		AllowedConditions:      cloneStringSlice(input.AllowedConditions),
+		BundlePrice:            input.BundlePrice,
+		Notes:                  input.Notes,
+		BookIDs:                cloneIntSlice(input.BookIDs),
+		Books:                  books,
+		InStock:                true,
+		OutOfStockOnInterested: input.OutOfStockOnInterested,
+		ImageMimeType:          input.Image.MimeType,
+		IsPublished:            false,
+		PublishedAt:            nil,
+		UnpublishedAt:          &now,
 	}
 }
 

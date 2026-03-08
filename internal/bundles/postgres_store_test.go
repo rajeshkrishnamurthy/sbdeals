@@ -63,32 +63,33 @@ func TestPostgresStoreCreateAndGet(t *testing.T) {
 	defer db.Close()
 
 	input := CreateInput{
-		Name:              "Starter",
-		SupplierID:        1,
-		Category:          "Fiction",
-		AllowedConditions: []string{"Very good", "Good as new"},
-		BookIDs:           []int{10, 11},
-		BundlePrice:       499,
-		Notes:             "Weekend deal",
-		Image:             Image{Data: []byte("bundle-image"), MimeType: "image/png"},
+		Name:                   "Starter",
+		SupplierID:             1,
+		Category:               "Fiction",
+		AllowedConditions:      []string{"Very good", "Good as new"},
+		BookIDs:                []int{10, 11},
+		BundlePrice:            499,
+		Notes:                  "Weekend deal",
+		Image:                  Image{Data: []byte("bundle-image"), MimeType: "image/png"},
+		OutOfStockOnInterested: true,
 	}
 
-	insertBundle := `INSERT INTO bundles (name, supplier_id, category, allowed_conditions, bundle_price, notes, bundle_image, bundle_image_mime_type) VALUES ($1, $2, $3, string_to_array($4, '||'), $5, $6, $7, $8) RETURNING id`
+	insertBundle := `INSERT INTO bundles (name, supplier_id, category, allowed_conditions, bundle_price, notes, bundle_image, bundle_image_mime_type, out_of_stock_on_interested) VALUES ($1, $2, $3, string_to_array($4, '||'), $5, $6, $7, $8, $9) RETURNING id`
 	insertBundleBook := `INSERT INTO bundle_books (bundle_id, book_id, position) VALUES ($1, $2, $3)`
-	getBundleQuery := `SELECT b.id, b.name, b.supplier_id, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, b.notes, b.bundle_image_mime_type, b.is_published, b.published_at, b.unpublished_at FROM bundles b JOIN suppliers s ON s.id = b.supplier_id WHERE b.id = $1`
+	getBundleQuery := `SELECT b.id, b.name, b.supplier_id, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, b.notes, b.in_stock, b.out_of_stock_on_interested, b.bundle_image_mime_type, b.is_published, b.published_at, b.unpublished_at FROM bundles b JOIN suppliers s ON s.id = b.supplier_id WHERE b.id = $1`
 	getBooksQuery := `SELECT bb.book_id, b.title, b.author, b.supplier_id, b.is_box_set, b.category, b.condition, b.mrp, b.my_price, b.bundle_price, b.in_stock FROM bundle_books bb JOIN books b ON b.id = bb.book_id WHERE bb.bundle_id = $1 ORDER BY bb.position ASC`
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta(insertBundle)).
-		WithArgs(input.Name, input.SupplierID, input.Category, "Very good||Good as new", input.BundlePrice, input.Notes, input.Image.Data, input.Image.MimeType).
+		WithArgs(input.Name, input.SupplierID, input.Category, "Very good||Good as new", input.BundlePrice, input.Notes, input.Image.Data, input.Image.MimeType, input.OutOfStockOnInterested).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(22))
 	mock.ExpectExec(regexp.QuoteMeta(insertBundleBook)).WithArgs(22, 10, 0).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(insertBundleBook)).WithArgs(22, 11, 1).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	mock.ExpectQuery(regexp.QuoteMeta(getBundleQuery)).WithArgs(22).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "supplier_id", "supplier_name", "category", "allowed_conditions", "bundle_price", "notes", "bundle_image_mime_type", "is_published", "published_at", "unpublished_at"}).
-			AddRow(22, input.Name, input.SupplierID, "Supplier A", input.Category, "Very good||Good as new", input.BundlePrice, input.Notes, "image/png", false, nil, time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC)))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "supplier_id", "supplier_name", "category", "allowed_conditions", "bundle_price", "notes", "in_stock", "out_of_stock_on_interested", "bundle_image_mime_type", "is_published", "published_at", "unpublished_at"}).
+			AddRow(22, input.Name, input.SupplierID, "Supplier A", input.Category, "Very good||Good as new", input.BundlePrice, input.Notes, true, true, "image/png", false, nil, time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC)))
 	mock.ExpectQuery(regexp.QuoteMeta(getBooksQuery)).WithArgs(22).
 		WillReturnRows(sqlmock.NewRows([]string{"book_id", "title", "author", "supplier_id", "is_box_set", "category", "condition", "mrp", "my_price", "bundle_price", "in_stock"}).
 			AddRow(10, "Book A", "Author A", 1, false, "Fiction", "Very good", 400.0, 250.0, nil, true).
@@ -115,34 +116,35 @@ func TestPostgresStoreUpdateAndNotFound(t *testing.T) {
 	}
 	defer db.Close()
 
-	updateWithImageQuery := `UPDATE bundles SET name = $1, supplier_id = $2, category = $3, allowed_conditions = string_to_array($4, '||'), bundle_price = $5, notes = $6, bundle_image = $7, bundle_image_mime_type = $8, updated_at = NOW() WHERE id = $9`
+	updateWithImageQuery := `UPDATE bundles SET name = $1, supplier_id = $2, category = $3, allowed_conditions = string_to_array($4, '||'), bundle_price = $5, notes = $6, bundle_image = $7, bundle_image_mime_type = $8, out_of_stock_on_interested = $9, updated_at = NOW() WHERE id = $10`
 	deleteBooks := `DELETE FROM bundle_books WHERE bundle_id = $1`
 	insertBundleBook := `INSERT INTO bundle_books (bundle_id, book_id, position) VALUES ($1, $2, $3)`
-	getBundleQuery := `SELECT b.id, b.name, b.supplier_id, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, b.notes, b.bundle_image_mime_type, b.is_published, b.published_at, b.unpublished_at FROM bundles b JOIN suppliers s ON s.id = b.supplier_id WHERE b.id = $1`
+	getBundleQuery := `SELECT b.id, b.name, b.supplier_id, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, b.notes, b.in_stock, b.out_of_stock_on_interested, b.bundle_image_mime_type, b.is_published, b.published_at, b.unpublished_at FROM bundles b JOIN suppliers s ON s.id = b.supplier_id WHERE b.id = $1`
 	getBooksQuery := `SELECT bb.book_id, b.title, b.author, b.supplier_id, b.is_box_set, b.category, b.condition, b.mrp, b.my_price, b.bundle_price, b.in_stock FROM bundle_books bb JOIN books b ON b.id = bb.book_id WHERE bb.bundle_id = $1 ORDER BY bb.position ASC`
 
 	updateInput := UpdateInput{
-		Name:              "Updated",
-		SupplierID:        2,
-		Category:          "Non-Fiction",
-		AllowedConditions: []string{"Used"},
-		BookIDs:           []int{40, 41},
-		BundlePrice:       199,
-		Notes:             "Updated",
-		Image:             &Image{Data: []byte("updated-image"), MimeType: "image/jpeg"},
+		Name:                   "Updated",
+		SupplierID:             2,
+		Category:               "Non-Fiction",
+		AllowedConditions:      []string{"Used"},
+		BookIDs:                []int{40, 41},
+		BundlePrice:            199,
+		Notes:                  "Updated",
+		Image:                  &Image{Data: []byte("updated-image"), MimeType: "image/jpeg"},
+		OutOfStockOnInterested: false,
 	}
 
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(updateWithImageQuery)).
-		WithArgs(updateInput.Name, updateInput.SupplierID, updateInput.Category, "Used", updateInput.BundlePrice, updateInput.Notes, updateInput.Image.Data, updateInput.Image.MimeType, 9).
+		WithArgs(updateInput.Name, updateInput.SupplierID, updateInput.Category, "Used", updateInput.BundlePrice, updateInput.Notes, updateInput.Image.Data, updateInput.Image.MimeType, updateInput.OutOfStockOnInterested, 9).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(deleteBooks)).WithArgs(9).WillReturnResult(sqlmock.NewResult(0, 2))
 	mock.ExpectExec(regexp.QuoteMeta(insertBundleBook)).WithArgs(9, 40, 0).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(insertBundleBook)).WithArgs(9, 41, 1).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	mock.ExpectQuery(regexp.QuoteMeta(getBundleQuery)).WithArgs(9).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "supplier_id", "supplier_name", "category", "allowed_conditions", "bundle_price", "notes", "bundle_image_mime_type", "is_published", "published_at", "unpublished_at"}).
-			AddRow(9, updateInput.Name, updateInput.SupplierID, "Supplier 2", updateInput.Category, "Used", updateInput.BundlePrice, updateInput.Notes, "image/jpeg", false, nil, time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC)))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "supplier_id", "supplier_name", "category", "allowed_conditions", "bundle_price", "notes", "in_stock", "out_of_stock_on_interested", "bundle_image_mime_type", "is_published", "published_at", "unpublished_at"}).
+			AddRow(9, updateInput.Name, updateInput.SupplierID, "Supplier 2", updateInput.Category, "Used", updateInput.BundlePrice, updateInput.Notes, true, false, "image/jpeg", false, nil, time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC)))
 	mock.ExpectQuery(regexp.QuoteMeta(getBooksQuery)).WithArgs(9).
 		WillReturnRows(sqlmock.NewRows([]string{"book_id", "title", "author", "supplier_id", "is_box_set", "category", "condition", "mrp", "my_price", "bundle_price", "in_stock"}).
 			AddRow(40, "B1", "A1", 2, false, "Non-Fiction", "Used", 300.0, 200.0, nil, true).
@@ -150,7 +152,7 @@ func TestPostgresStoreUpdateAndNotFound(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(updateWithImageQuery)).
-		WithArgs(updateInput.Name, updateInput.SupplierID, updateInput.Category, "Used", updateInput.BundlePrice, updateInput.Notes, updateInput.Image.Data, updateInput.Image.MimeType, 99).
+		WithArgs(updateInput.Name, updateInput.SupplierID, updateInput.Category, "Used", updateInput.BundlePrice, updateInput.Notes, updateInput.Image.Data, updateInput.Image.MimeType, updateInput.OutOfStockOnInterested, 99).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectRollback()
 
@@ -180,7 +182,7 @@ func TestPostgresStoreGetNotFound(t *testing.T) {
 	}
 	defer db.Close()
 
-	getBundleQuery := `SELECT b.id, b.name, b.supplier_id, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, b.notes, b.bundle_image_mime_type, b.is_published, b.published_at, b.unpublished_at FROM bundles b JOIN suppliers s ON s.id = b.supplier_id WHERE b.id = $1`
+	getBundleQuery := `SELECT b.id, b.name, b.supplier_id, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, b.notes, b.in_stock, b.out_of_stock_on_interested, b.bundle_image_mime_type, b.is_published, b.published_at, b.unpublished_at FROM bundles b JOIN suppliers s ON s.id = b.supplier_id WHERE b.id = $1`
 	mock.ExpectQuery(regexp.QuoteMeta(getBundleQuery)).WithArgs(33).WillReturnError(sql.ErrNoRows)
 
 	store := NewPostgresStore(db)
@@ -201,9 +203,9 @@ func TestPostgresStorePublishUnpublishAndOutOfStockRule(t *testing.T) {
 	}
 	defer db.Close()
 
-	publishQuery := `UPDATE bundles b SET is_published = TRUE, published_at = NOW(), updated_at = NOW() WHERE b.id = $1 AND NOT EXISTS (SELECT 1 FROM bundle_books bb JOIN books bk ON bk.id = bb.book_id WHERE bb.bundle_id = b.id AND bk.in_stock = FALSE) RETURNING b.id`
-	unpublishQuery := `UPDATE bundles SET is_published = FALSE, unpublished_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING id`
-	getBundleQuery := `SELECT b.id, b.name, b.supplier_id, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, b.notes, b.bundle_image_mime_type, b.is_published, b.published_at, b.unpublished_at FROM bundles b JOIN suppliers s ON s.id = b.supplier_id WHERE b.id = $1`
+	publishQuery := `UPDATE bundles b SET is_published = TRUE, published_at = NOW(), unpublished_reason = '', updated_at = NOW() WHERE b.id = $1 AND b.in_stock = TRUE AND NOT EXISTS (SELECT 1 FROM bundle_books bb JOIN books bk ON bk.id = bb.book_id WHERE bb.bundle_id = b.id AND bk.in_stock = FALSE) RETURNING b.id`
+	unpublishQuery := `UPDATE bundles SET is_published = FALSE, unpublished_at = NOW(), unpublished_reason = '', updated_at = NOW() WHERE id = $1 RETURNING id`
+	getBundleQuery := `SELECT b.id, b.name, b.supplier_id, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, b.notes, b.in_stock, b.out_of_stock_on_interested, b.bundle_image_mime_type, b.is_published, b.published_at, b.unpublished_at FROM bundles b JOIN suppliers s ON s.id = b.supplier_id WHERE b.id = $1`
 	getBooksQuery := `SELECT bb.book_id, b.title, b.author, b.supplier_id, b.is_box_set, b.category, b.condition, b.mrp, b.my_price, b.bundle_price, b.in_stock FROM bundle_books bb JOIN books b ON b.id = bb.book_id WHERE bb.bundle_id = $1 ORDER BY bb.position ASC`
 	outOfStockTitlesQuery := `SELECT b.title FROM bundle_books bb JOIN books b ON b.id = bb.book_id WHERE bb.bundle_id = $1 AND b.in_stock = FALSE ORDER BY b.title ASC`
 
@@ -211,8 +213,8 @@ func TestPostgresStorePublishUnpublishAndOutOfStockRule(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(publishQuery)).WithArgs(9).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(9))
 	mock.ExpectQuery(regexp.QuoteMeta(getBundleQuery)).WithArgs(9).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "supplier_id", "supplier_name", "category", "allowed_conditions", "bundle_price", "notes", "bundle_image_mime_type", "is_published", "published_at", "unpublished_at"}).
-			AddRow(9, "Bundle", 1, "Supplier A", "Fiction", "Very good", 299.0, "", "image/png", true, now, now))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "supplier_id", "supplier_name", "category", "allowed_conditions", "bundle_price", "notes", "in_stock", "out_of_stock_on_interested", "bundle_image_mime_type", "is_published", "published_at", "unpublished_at"}).
+			AddRow(9, "Bundle", 1, "Supplier A", "Fiction", "Very good", 299.0, "", true, true, "image/png", true, now, now))
 	mock.ExpectQuery(regexp.QuoteMeta(getBooksQuery)).WithArgs(9).
 		WillReturnRows(sqlmock.NewRows([]string{"book_id", "title", "author", "supplier_id", "is_box_set", "category", "condition", "mrp", "my_price", "bundle_price", "in_stock"}).
 			AddRow(10, "Book A", "A", 1, false, "Fiction", "Very good", 200.0, 100.0, nil, true).
@@ -221,8 +223,8 @@ func TestPostgresStorePublishUnpublishAndOutOfStockRule(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(unpublishQuery)).WithArgs(9).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(9))
 	mock.ExpectQuery(regexp.QuoteMeta(getBundleQuery)).WithArgs(9).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "supplier_id", "supplier_name", "category", "allowed_conditions", "bundle_price", "notes", "bundle_image_mime_type", "is_published", "published_at", "unpublished_at"}).
-			AddRow(9, "Bundle", 1, "Supplier A", "Fiction", "Very good", 299.0, "", "image/png", false, now, now))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "supplier_id", "supplier_name", "category", "allowed_conditions", "bundle_price", "notes", "in_stock", "out_of_stock_on_interested", "bundle_image_mime_type", "is_published", "published_at", "unpublished_at"}).
+			AddRow(9, "Bundle", 1, "Supplier A", "Fiction", "Very good", 299.0, "", true, true, "image/png", false, now, now))
 	mock.ExpectQuery(regexp.QuoteMeta(getBooksQuery)).WithArgs(9).
 		WillReturnRows(sqlmock.NewRows([]string{"book_id", "title", "author", "supplier_id", "is_box_set", "category", "condition", "mrp", "my_price", "bundle_price", "in_stock"}).
 			AddRow(10, "Book A", "A", 1, false, "Fiction", "Very good", 200.0, 100.0, nil, true).
@@ -231,8 +233,8 @@ func TestPostgresStorePublishUnpublishAndOutOfStockRule(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(publishQuery)).WithArgs(20).
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery(regexp.QuoteMeta(getBundleQuery)).WithArgs(20).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "supplier_id", "supplier_name", "category", "allowed_conditions", "bundle_price", "notes", "bundle_image_mime_type", "is_published", "published_at", "unpublished_at"}).
-			AddRow(20, "Bundle 20", 1, "Supplier A", "Fiction", "Very good", 199.0, "", "", false, nil, now))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "supplier_id", "supplier_name", "category", "allowed_conditions", "bundle_price", "notes", "in_stock", "out_of_stock_on_interested", "bundle_image_mime_type", "is_published", "published_at", "unpublished_at"}).
+			AddRow(20, "Bundle 20", 1, "Supplier A", "Fiction", "Very good", 199.0, "", true, true, "", false, nil, now))
 	mock.ExpectQuery(regexp.QuoteMeta(getBooksQuery)).WithArgs(20).
 		WillReturnRows(sqlmock.NewRows([]string{"book_id", "title", "author", "supplier_id", "is_box_set", "category", "condition", "mrp", "my_price", "bundle_price", "in_stock"}).
 			AddRow(40, "Out Book", "A", 1, false, "Fiction", "Very good", 100.0, 90.0, nil, false))

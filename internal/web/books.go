@@ -30,6 +30,7 @@ var (
 		"mrp",
 		"my_price",
 		"bundle_price",
+		"out_of_stock_on_interested",
 		"in_stock",
 	}
 )
@@ -62,7 +63,7 @@ func (s *Server) handleBookNew(w http.ResponseWriter, r *http.Request) {
 		Action:            "/admin/books",
 		SubmitLabel:       "Save Book",
 		ActiveSection:     "books",
-		Input:             bookFormInput{InStock: "yes", IsBoxSet: "no"},
+		Input:             bookFormInput{InStock: "yes", IsBoxSet: "no", OutOfStockOnInterested: "yes"},
 		SupplierOptions:   suppliersList,
 		CategoryOptions:   bookCategoryOptions,
 		FormatOptions:     bookFormatOptions,
@@ -211,18 +212,19 @@ func (s *Server) createBook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, err = s.bookStore.Create(books.CreateInput{
-		Title:       parsed.Title,
-		Cover:       cover,
-		SupplierID:  parsed.SupplierID,
-		IsBoxSet:    parsed.IsBoxSet,
-		Category:    parsed.Category,
-		Format:      parsed.Format,
-		Condition:   parsed.Condition,
-		MRP:         parsed.MRP,
-		MyPrice:     parsed.MyPrice,
-		BundlePrice: parsed.BundlePrice,
-		Author:      parsed.Author,
-		Notes:       parsed.Notes,
+		Title:                  parsed.Title,
+		Cover:                  cover,
+		SupplierID:             parsed.SupplierID,
+		IsBoxSet:               parsed.IsBoxSet,
+		Category:               parsed.Category,
+		Format:                 parsed.Format,
+		Condition:              parsed.Condition,
+		MRP:                    parsed.MRP,
+		MyPrice:                parsed.MyPrice,
+		BundlePrice:            parsed.BundlePrice,
+		Author:                 parsed.Author,
+		Notes:                  parsed.Notes,
+		OutOfStockOnInterested: parsed.OutOfStockOnInterested,
 	})
 	if err != nil {
 		http.Error(w, "failed to create book", http.StatusInternalServerError)
@@ -250,18 +252,19 @@ func (s *Server) renderBookDetail(w http.ResponseWriter, r *http.Request, bookID
 	}
 
 	input := bookFormInput{
-		Title:       book.Title,
-		SupplierID:  strconv.Itoa(book.SupplierID),
-		IsBoxSet:    boolToYesNo(book.IsBoxSet),
-		Category:    book.Category,
-		Format:      book.Format,
-		Condition:   book.Condition,
-		MRP:         formatDecimal(book.MRP),
-		MyPrice:     formatDecimal(book.MyPrice),
-		BundlePrice: optionalDecimal(book.BundlePrice),
-		Author:      book.Author,
-		Notes:       book.Notes,
-		InStock:     boolToStockValue(book.InStock),
+		Title:                  book.Title,
+		SupplierID:             strconv.Itoa(book.SupplierID),
+		IsBoxSet:               boolToYesNo(book.IsBoxSet),
+		Category:               book.Category,
+		Format:                 book.Format,
+		Condition:              book.Condition,
+		MRP:                    formatDecimal(book.MRP),
+		MyPrice:                formatDecimal(book.MyPrice),
+		BundlePrice:            optionalDecimal(book.BundlePrice),
+		Author:                 book.Author,
+		Notes:                  book.Notes,
+		InStock:                boolToStockValue(book.InStock),
+		OutOfStockOnInterested: boolToYesNo(book.OutOfStockOnInterested),
 	}
 
 	summary := &bookSummaryViewModel{
@@ -359,19 +362,20 @@ func (s *Server) updateBook(w http.ResponseWriter, r *http.Request, bookID int) 
 	}
 
 	_, err = s.bookStore.Update(bookID, books.UpdateInput{
-		Title:       parsed.Title,
-		Cover:       coverPtr,
-		SupplierID:  parsed.SupplierID,
-		IsBoxSet:    parsed.IsBoxSet,
-		Category:    parsed.Category,
-		Format:      parsed.Format,
-		Condition:   parsed.Condition,
-		MRP:         parsed.MRP,
-		MyPrice:     parsed.MyPrice,
-		BundlePrice: parsed.BundlePrice,
-		Author:      parsed.Author,
-		Notes:       parsed.Notes,
-		InStock:     parsed.InStock,
+		Title:                  parsed.Title,
+		Cover:                  coverPtr,
+		SupplierID:             parsed.SupplierID,
+		IsBoxSet:               parsed.IsBoxSet,
+		Category:               parsed.Category,
+		Format:                 parsed.Format,
+		Condition:              parsed.Condition,
+		MRP:                    parsed.MRP,
+		MyPrice:                parsed.MyPrice,
+		BundlePrice:            parsed.BundlePrice,
+		Author:                 parsed.Author,
+		Notes:                  parsed.Notes,
+		InStock:                parsed.InStock,
+		OutOfStockOnInterested: parsed.OutOfStockOnInterested,
 	})
 	if err != nil {
 		if errors.Is(err, books.ErrNotFound) {
@@ -502,18 +506,19 @@ func parseBookPath(path string) (int, string, bool) {
 
 func readBookFormInput(r *http.Request) bookFormInput {
 	return bookFormInput{
-		Title:       strings.TrimSpace(r.FormValue("title")),
-		SupplierID:  strings.TrimSpace(r.FormValue("supplier_id")),
-		IsBoxSet:    strings.TrimSpace(r.FormValue("is_box_set")),
-		Category:    strings.TrimSpace(r.FormValue("category")),
-		Format:      strings.TrimSpace(r.FormValue("format")),
-		Condition:   strings.TrimSpace(r.FormValue("condition")),
-		MRP:         strings.TrimSpace(r.FormValue("mrp")),
-		MyPrice:     strings.TrimSpace(r.FormValue("my_price")),
-		BundlePrice: strings.TrimSpace(r.FormValue("bundle_price")),
-		Author:      strings.TrimSpace(r.FormValue("author")),
-		Notes:       strings.TrimSpace(r.FormValue("notes")),
-		InStock:     strings.TrimSpace(r.FormValue("in_stock")),
+		Title:                  strings.TrimSpace(r.FormValue("title")),
+		SupplierID:             strings.TrimSpace(r.FormValue("supplier_id")),
+		IsBoxSet:               strings.TrimSpace(r.FormValue("is_box_set")),
+		Category:               strings.TrimSpace(r.FormValue("category")),
+		Format:                 strings.TrimSpace(r.FormValue("format")),
+		Condition:              strings.TrimSpace(r.FormValue("condition")),
+		MRP:                    strings.TrimSpace(r.FormValue("mrp")),
+		MyPrice:                strings.TrimSpace(r.FormValue("my_price")),
+		BundlePrice:            strings.TrimSpace(r.FormValue("bundle_price")),
+		Author:                 strings.TrimSpace(r.FormValue("author")),
+		Notes:                  strings.TrimSpace(r.FormValue("notes")),
+		InStock:                strings.TrimSpace(r.FormValue("in_stock")),
+		OutOfStockOnInterested: strings.TrimSpace(r.FormValue("out_of_stock_on_interested")),
 	}
 }
 
@@ -539,27 +544,38 @@ func readCoverFromRequest(r *http.Request) (books.Cover, bool, error) {
 }
 
 type parsedBookForm struct {
-	Title       string
-	SupplierID  int
-	IsBoxSet    bool
-	Category    string
-	Format      string
-	Condition   string
-	MRP         float64
-	MyPrice     float64
-	BundlePrice *float64
-	Author      string
-	Notes       string
-	InStock     bool
+	Title                  string
+	SupplierID             int
+	IsBoxSet               bool
+	Category               string
+	Format                 string
+	Condition              string
+	MRP                    float64
+	MyPrice                float64
+	BundlePrice            *float64
+	Author                 string
+	Notes                  string
+	InStock                bool
+	OutOfStockOnInterested bool
 }
 
 func validateBookForm(input bookFormInput, suppliersList []suppliers.Supplier, requireCover bool, coverProvided bool, requireInStock bool) (parsedBookForm, map[string]string) {
-	result := parsedBookForm{Title: input.Title, Category: input.Category, Format: input.Format, Condition: input.Condition, Author: input.Author, Notes: input.Notes, InStock: true}
+	result := parsedBookForm{
+		Title:                  input.Title,
+		Category:               input.Category,
+		Format:                 input.Format,
+		Condition:              input.Condition,
+		Author:                 input.Author,
+		Notes:                  input.Notes,
+		InStock:                true,
+		OutOfStockOnInterested: true,
+	}
 	errs := map[string]string{}
 
 	validateBookIdentity(input, suppliersList, requireCover, coverProvided, &result, errs)
 	validateBookClassification(input, errs)
 	validateBookPricing(input, &result, errs)
+	validateBookOutOfStockOnInterested(input, &result, errs)
 	validateBookStock(input, requireInStock, &result, errs)
 
 	return result, errs
@@ -633,6 +649,14 @@ func validateBookStock(input bookFormInput, requireInStock bool, result *parsedB
 	errs["in_stock"] = "Please choose a valid in-stock value."
 }
 
+func validateBookOutOfStockOnInterested(input bookFormInput, result *parsedBookForm, errs map[string]string) {
+	if value, ok := parseRequiredYesNo(input.OutOfStockOnInterested); ok {
+		result.OutOfStockOnInterested = value
+		return
+	}
+	errs["out_of_stock_on_interested"] = "Please choose a valid Out of stock on interested value."
+}
+
 func validateOption(value string, allowed []string, emptyMsg string, invalidMsg string) string {
 	if value == "" {
 		return emptyMsg
@@ -691,6 +715,17 @@ func parseYesNo(value string) (bool, bool) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "":
 		return false, true
+	case "yes":
+		return true, true
+	case "no":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+func parseRequiredYesNo(value string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "yes":
 		return true, true
 	case "no":
@@ -771,18 +806,19 @@ type bookSummaryViewModel struct {
 }
 
 type bookFormInput struct {
-	Title       string
-	SupplierID  string
-	IsBoxSet    string
-	Category    string
-	Format      string
-	Condition   string
-	MRP         string
-	MyPrice     string
-	BundlePrice string
-	Author      string
-	Notes       string
-	InStock     string
+	Title                  string
+	SupplierID             string
+	IsBoxSet               string
+	Category               string
+	Format                 string
+	Condition              string
+	MRP                    string
+	MyPrice                string
+	BundlePrice            string
+	Author                 string
+	Notes                  string
+	InStock                string
+	OutOfStockOnInterested string
 }
 
 type bookFormViewModel struct {
@@ -1164,6 +1200,15 @@ var booksFormTemplate = template.Must(template.New("books-form").Funcs(template.
       <div class="field">
         <label for="notes">Notes/Description (optional)</label>
         <textarea id="notes" name="notes">{{.Input.Notes}}</textarea>
+      </div>
+
+      <div class="field">
+        <label for="out_of_stock_on_interested">Out of stock on interested</label>
+        <select id="out_of_stock_on_interested" name="out_of_stock_on_interested">
+          <option value="yes" {{if eq .Input.OutOfStockOnInterested "yes"}}selected{{end}}>Yes</option>
+          <option value="no" {{if eq .Input.OutOfStockOnInterested "no"}}selected{{end}}>No</option>
+        </select>
+        {{if .HasError "out_of_stock_on_interested"}}<div class="error">{{.Error "out_of_stock_on_interested"}}</div>{{end}}
       </div>
 
       {{if .ShowInStockEditor}}

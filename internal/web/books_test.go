@@ -631,6 +631,13 @@ type bookFormParts struct {
 
 func multipartBookForm(t *testing.T, parts bookFormParts) (string, io.Reader) {
 	t.Helper()
+	if parts.Fields == nil {
+		parts.Fields = map[string]string{}
+	}
+	if _, ok := parts.Fields["out_of_stock_on_interested"]; !ok {
+		parts.Fields["out_of_stock_on_interested"] = "yes"
+	}
+
 	buf := &bytes.Buffer{}
 	writer := multipart.NewWriter(buf)
 	for key, value := range parts.Fields {

@@ -138,7 +138,7 @@ func (s *Server) buildCatalogBookItem(itemID int) (catalogItemResponse, bool, er
 	if err != nil {
 		return catalogItemResponse{}, false, err
 	}
-	if !book.IsPublished || !book.InStock {
+	if !book.IsPublished {
 		return catalogItemResponse{}, false, nil
 	}
 
@@ -165,7 +165,7 @@ func (s *Server) buildCatalogBundleItem(itemID int) (catalogItemResponse, bool, 
 	if err != nil {
 		return catalogItemResponse{}, false, err
 	}
-	if !bundle.IsPublished || !bundleBooksInStock(bundle.Books) {
+	if !bundle.IsPublished {
 		return catalogItemResponse{}, false, nil
 	}
 
@@ -190,15 +190,6 @@ func (s *Server) buildCatalogBundleItem(itemID int) (catalogItemResponse, bool, 
 
 func isCatalogItemNotFound(err error) bool {
 	return errors.Is(err, books.ErrNotFound) || errors.Is(err, bundles.ErrNotFound)
-}
-
-func bundleBooksInStock(items []bundles.BundleBook) bool {
-	for _, item := range items {
-		if !item.InStock {
-			return false
-		}
-	}
-	return true
 }
 
 func sumCatalogBundleMRP(items []bundles.BundleBook) float64 {

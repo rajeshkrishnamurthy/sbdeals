@@ -70,20 +70,22 @@ type PickerBook struct {
 
 // Bundle is the detailed bundle aggregate used by add/edit screens.
 type Bundle struct {
-	ID                int
-	Name              string
-	SupplierID        int
-	SupplierName      string
-	Category          string
-	AllowedConditions []string
-	BundlePrice       float64
-	Notes             string
-	BookIDs           []int
-	Books             []BundleBook
-	ImageMimeType     string
-	IsPublished       bool
-	PublishedAt       *time.Time
-	UnpublishedAt     *time.Time
+	ID                     int
+	Name                   string
+	SupplierID             int
+	SupplierName           string
+	Category               string
+	AllowedConditions      []string
+	BundlePrice            float64
+	Notes                  string
+	BookIDs                []int
+	Books                  []BundleBook
+	InStock                bool
+	OutOfStockOnInterested bool
+	ImageMimeType          string
+	IsPublished            bool
+	PublishedAt            *time.Time
+	UnpublishedAt          *time.Time
 }
 
 // ListItem is the low-clutter projection for bundles list page.
@@ -104,26 +106,28 @@ type ListItem struct {
 
 // CreateInput captures required and optional fields for bundle creation.
 type CreateInput struct {
-	Name              string
-	SupplierID        int
-	Category          string
-	AllowedConditions []string
-	BookIDs           []int
-	BundlePrice       float64
-	Notes             string
-	Image             Image
+	Name                   string
+	SupplierID             int
+	Category               string
+	AllowedConditions      []string
+	BookIDs                []int
+	BundlePrice            float64
+	Notes                  string
+	Image                  Image
+	OutOfStockOnInterested bool
 }
 
 // UpdateInput captures editable fields for bundle updates.
 type UpdateInput struct {
-	Name              string
-	SupplierID        int
-	Category          string
-	AllowedConditions []string
-	BookIDs           []int
-	BundlePrice       float64
-	Notes             string
-	Image             *Image
+	Name                   string
+	SupplierID             int
+	Category               string
+	AllowedConditions      []string
+	BookIDs                []int
+	BundlePrice            float64
+	Notes                  string
+	Image                  *Image
+	OutOfStockOnInterested bool
 }
 
 // Store defines persistence operations for bundles.

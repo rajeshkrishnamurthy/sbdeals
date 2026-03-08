@@ -23,6 +23,7 @@ var bundleValidationFieldOrder = []string{
 	"allowed_conditions",
 	"book_ids",
 	"bundle_price",
+	"out_of_stock_on_interested",
 }
 
 func (s *Server) handleBundlesCollection(w http.ResponseWriter, r *http.Request) {
@@ -53,7 +54,7 @@ func (s *Server) handleBundleNew(w http.ResponseWriter, r *http.Request) {
 		Action:           "/admin/bundles",
 		SubmitLabel:      "Save Bundle",
 		ActiveSection:    "bundles",
-		Input:            bundleFormInput{},
+		Input:            bundleFormInput{OutOfStockOnInterested: "yes"},
 		SupplierOptions:  suppliersList,
 		CandidateBooks:   pickerBooks,
 		SelectedBooks:    []bundles.PickerBook{},
@@ -181,14 +182,15 @@ func (s *Server) createBundle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, err = s.bundleStore.Create(bundles.CreateInput{
-		Name:              parsed.Name,
-		SupplierID:        parsed.SupplierID,
-		Category:          parsed.Category,
-		AllowedConditions: parsed.AllowedConditions,
-		BookIDs:           parsed.BookIDs,
-		BundlePrice:       parsed.BundlePrice,
-		Notes:             parsed.Notes,
-		Image:             image,
+		Name:                   parsed.Name,
+		SupplierID:             parsed.SupplierID,
+		Category:               parsed.Category,
+		AllowedConditions:      parsed.AllowedConditions,
+		BookIDs:                parsed.BookIDs,
+		BundlePrice:            parsed.BundlePrice,
+		Notes:                  parsed.Notes,
+		Image:                  image,
+		OutOfStockOnInterested: parsed.OutOfStockOnInterested,
 	})
 	if err != nil {
 		http.Error(w, "failed to create bundle", http.StatusInternalServerError)
@@ -217,13 +219,14 @@ func (s *Server) renderBundleDetail(w http.ResponseWriter, r *http.Request, bund
 
 	selectedBooks := toPickerBooksFromBundle(bundle.Books)
 	input := bundleFormInput{
-		Name:              bundle.Name,
-		SupplierID:        strconv.Itoa(bundle.SupplierID),
-		Category:          bundle.Category,
-		AllowedConditions: append([]string(nil), bundle.AllowedConditions...),
-		BookIDValues:      intSliceToStringSlice(bundle.BookIDs),
-		BundlePrice:       formatDecimal(bundle.BundlePrice),
-		Notes:             bundle.Notes,
+		Name:                   bundle.Name,
+		SupplierID:             strconv.Itoa(bundle.SupplierID),
+		Category:               bundle.Category,
+		AllowedConditions:      append([]string(nil), bundle.AllowedConditions...),
+		BookIDValues:           intSliceToStringSlice(bundle.BookIDs),
+		BundlePrice:            formatDecimal(bundle.BundlePrice),
+		Notes:                  bundle.Notes,
+		OutOfStockOnInterested: boolToYesNo(bundle.OutOfStockOnInterested),
 	}
 
 	summary := &bundleSummaryViewModel{
@@ -319,14 +322,15 @@ func (s *Server) updateBundle(w http.ResponseWriter, r *http.Request, bundleID i
 	}
 
 	_, err = s.bundleStore.Update(bundleID, bundles.UpdateInput{
-		Name:              parsed.Name,
-		SupplierID:        parsed.SupplierID,
-		Category:          parsed.Category,
-		AllowedConditions: parsed.AllowedConditions,
-		BookIDs:           parsed.BookIDs,
-		BundlePrice:       parsed.BundlePrice,
-		Notes:             parsed.Notes,
-		Image:             optionalBundleImage(image, imageProvided),
+		Name:                   parsed.Name,
+		SupplierID:             parsed.SupplierID,
+		Category:               parsed.Category,
+		AllowedConditions:      parsed.AllowedConditions,
+		BookIDs:                parsed.BookIDs,
+		BundlePrice:            parsed.BundlePrice,
+		Notes:                  parsed.Notes,
+		Image:                  optionalBundleImage(image, imageProvided),
+		OutOfStockOnInterested: parsed.OutOfStockOnInterested,
 	})
 	if err != nil {
 		if errors.Is(err, bundles.ErrNotFound) {
@@ -416,13 +420,14 @@ func readBundleFormInput(r *http.Request) bundleFormInput {
 	allowedConditions := r.Form["allowed_conditions"]
 	sort.Strings(allowedConditions)
 	return bundleFormInput{
-		Name:              strings.TrimSpace(r.Form.Get("name")),
-		SupplierID:        strings.TrimSpace(r.Form.Get("supplier_id")),
-		Category:          strings.TrimSpace(r.Form.Get("category")),
-		AllowedConditions: trimAndCompact(allowedConditions),
-		BookIDValues:      trimAndCompact(bookIDs),
-		BundlePrice:       strings.TrimSpace(r.Form.Get("bundle_price")),
-		Notes:             strings.TrimSpace(r.Form.Get("notes")),
+		Name:                   strings.TrimSpace(r.Form.Get("name")),
+		SupplierID:             strings.TrimSpace(r.Form.Get("supplier_id")),
+		Category:               strings.TrimSpace(r.Form.Get("category")),
+		AllowedConditions:      trimAndCompact(allowedConditions),
+		BookIDValues:           trimAndCompact(bookIDs),
+		BundlePrice:            strings.TrimSpace(r.Form.Get("bundle_price")),
+		Notes:                  strings.TrimSpace(r.Form.Get("notes")),
+		OutOfStockOnInterested: strings.TrimSpace(r.Form.Get("out_of_stock_on_interested")),
 	}
 }
 
@@ -448,17 +453,24 @@ func readBundleImageFromRequest(r *http.Request) (bundles.Image, bool, error) {
 }
 
 type parsedBundleForm struct {
-	Name              string
-	SupplierID        int
-	Category          string
-	AllowedConditions []string
-	BookIDs           []int
-	BundlePrice       float64
-	Notes             string
+	Name                   string
+	SupplierID             int
+	Category               string
+	AllowedConditions      []string
+	BookIDs                []int
+	BundlePrice            float64
+	Notes                  string
+	OutOfStockOnInterested bool
 }
 
 func validateBundleFormInput(input bundleFormInput, suppliersList []suppliers.Supplier, pickerBooks []bundles.PickerBook, requireImage bool, imageProvided bool) (parsedBundleForm, map[string]string, []bundles.PickerBook) {
-	result := parsedBundleForm{Name: input.Name, Category: input.Category, AllowedConditions: append([]string(nil), input.AllowedConditions...), Notes: input.Notes}
+	result := parsedBundleForm{
+		Name:                   input.Name,
+		Category:               input.Category,
+		AllowedConditions:      append([]string(nil), input.AllowedConditions...),
+		Notes:                  input.Notes,
+		OutOfStockOnInterested: true,
+	}
 	errorsByField := map[string]string{}
 	if requireImage && !imageProvided {
 		errorsByField["image"] = "Bundle image is required."
@@ -498,6 +510,11 @@ func validateBundleFormInput(input bundleFormInput, suppliersList []suppliers.Su
 		errorsByField["bundle_price"] = "Bundle price is required and must be a non-negative number."
 	} else {
 		result.BundlePrice = *bundlePricePtr
+	}
+	if value, ok := parseRequiredYesNo(input.OutOfStockOnInterested); ok {
+		result.OutOfStockOnInterested = value
+	} else {
+		errorsByField["out_of_stock_on_interested"] = "Please choose a valid Out of stock on interested value."
 	}
 
 	if len(errorsByField) == 0 {
@@ -744,13 +761,14 @@ type bundleSummaryViewModel struct {
 }
 
 type bundleFormInput struct {
-	Name              string
-	SupplierID        string
-	Category          string
-	AllowedConditions []string
-	BookIDValues      []string
-	BundlePrice       string
-	Notes             string
+	Name                   string
+	SupplierID             string
+	Category               string
+	AllowedConditions      []string
+	BookIDValues           []string
+	BundlePrice            string
+	Notes                  string
+	OutOfStockOnInterested string
 }
 
 type bundleFormViewModel struct {
@@ -1195,6 +1213,14 @@ var bundleFormTemplate = template.Must(template.New("bundle-form").Funcs(templat
         </div>
         <div class="field"><label for="name">Bundle label/name (optional)</label><input id="name" name="name" value="{{.Input.Name}}"></div>
         <div class="field"><label for="notes">Notes/description (optional)</label><textarea id="notes" name="notes">{{.Input.Notes}}</textarea></div>
+        <div class="field">
+          <label for="out_of_stock_on_interested">Out of stock on interested</label>
+          <select id="out_of_stock_on_interested" name="out_of_stock_on_interested">
+            <option value="yes" {{if eq .Input.OutOfStockOnInterested "yes"}}selected{{end}}>Yes</option>
+            <option value="no" {{if eq .Input.OutOfStockOnInterested "no"}}selected{{end}}>No</option>
+          </select>
+          {{if .HasError "out_of_stock_on_interested"}}<div class="error">{{.Error "out_of_stock_on_interested"}}</div>{{end}}
+        </div>
       </div>
 
       <div class="row">

@@ -49,23 +49,24 @@ func (s *MemoryStore) Create(input CreateInput) (Book, error) {
 
 	now := time.Now().UTC()
 	book := Book{
-		ID:            s.nextID,
-		Title:         input.Title,
-		SupplierID:    input.SupplierID,
-		CoverMimeType: input.Cover.MimeType,
-		IsBoxSet:      input.IsBoxSet,
-		Category:      input.Category,
-		Format:        input.Format,
-		Condition:     input.Condition,
-		MRP:           input.MRP,
-		MyPrice:       input.MyPrice,
-		BundlePrice:   cloneFloatPointer(input.BundlePrice),
-		Author:        input.Author,
-		Notes:         input.Notes,
-		InStock:       true,
-		IsPublished:   false,
-		PublishedAt:   nil,
-		UnpublishedAt: &now,
+		ID:                     s.nextID,
+		Title:                  input.Title,
+		SupplierID:             input.SupplierID,
+		CoverMimeType:          input.Cover.MimeType,
+		IsBoxSet:               input.IsBoxSet,
+		Category:               input.Category,
+		Format:                 input.Format,
+		Condition:              input.Condition,
+		MRP:                    input.MRP,
+		MyPrice:                input.MyPrice,
+		BundlePrice:            cloneFloatPointer(input.BundlePrice),
+		Author:                 input.Author,
+		Notes:                  input.Notes,
+		InStock:                true,
+		OutOfStockOnInterested: input.OutOfStockOnInterested,
+		IsPublished:            false,
+		PublishedAt:            nil,
+		UnpublishedAt:          &now,
 	}
 
 	s.nextID++
@@ -117,6 +118,7 @@ func (s *MemoryStore) Update(id int, input UpdateInput) (Book, error) {
 	row.book.Author = input.Author
 	row.book.Notes = input.Notes
 	row.book.InStock = input.InStock
+	row.book.OutOfStockOnInterested = input.OutOfStockOnInterested
 
 	if input.Cover != nil {
 		row.cover = cloneCover(*input.Cover)

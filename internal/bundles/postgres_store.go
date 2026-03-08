@@ -58,10 +58,10 @@ func (s *PostgresStore) Create(input CreateInput) (Bundle, error) {
 		return Bundle{}, err
 	}
 
-	insertBundle := `INSERT INTO bundles (name, supplier_id, category, allowed_conditions, bundle_price, notes, bundle_image, bundle_image_mime_type) VALUES ($1, $2, $3, string_to_array($4, '||'), $5, $6, $7, $8) RETURNING id`
+	insertBundle := `INSERT INTO bundles (name, supplier_id, category, allowed_conditions, bundle_price, notes, bundle_image, bundle_image_mime_type, out_of_stock_on_interested) VALUES ($1, $2, $3, string_to_array($4, '||'), $5, $6, $7, $8, $9) RETURNING id`
 	conditions := joinConditions(input.AllowedConditions)
 	var bundleID int
-	if err := tx.QueryRowContext(ctx, insertBundle, input.Name, input.SupplierID, input.Category, conditions, input.BundlePrice, input.Notes, input.Image.Data, input.Image.MimeType).Scan(&bundleID); err != nil {
+	if err := tx.QueryRowContext(ctx, insertBundle, input.Name, input.SupplierID, input.Category, conditions, input.BundlePrice, input.Notes, input.Image.Data, input.Image.MimeType, input.OutOfStockOnInterested).Scan(&bundleID); err != nil {
 		_ = tx.Rollback()
 		return Bundle{}, err
 	}
@@ -100,11 +100,11 @@ func (s *PostgresStore) Update(id int, input UpdateInput) (Bundle, error) {
 		return Bundle{}, err
 	}
 
-	updateQuery := `UPDATE bundles SET name = $1, supplier_id = $2, category = $3, allowed_conditions = string_to_array($4, '||'), bundle_price = $5, notes = $6, updated_at = NOW() WHERE id = $7`
-	args := []any{input.Name, input.SupplierID, input.Category, joinConditions(input.AllowedConditions), input.BundlePrice, input.Notes, id}
+	updateQuery := `UPDATE bundles SET name = $1, supplier_id = $2, category = $3, allowed_conditions = string_to_array($4, '||'), bundle_price = $5, notes = $6, out_of_stock_on_interested = $7, updated_at = NOW() WHERE id = $8`
+	args := []any{input.Name, input.SupplierID, input.Category, joinConditions(input.AllowedConditions), input.BundlePrice, input.Notes, input.OutOfStockOnInterested, id}
 	if input.Image != nil {
-		updateQuery = `UPDATE bundles SET name = $1, supplier_id = $2, category = $3, allowed_conditions = string_to_array($4, '||'), bundle_price = $5, notes = $6, bundle_image = $7, bundle_image_mime_type = $8, updated_at = NOW() WHERE id = $9`
-		args = []any{input.Name, input.SupplierID, input.Category, joinConditions(input.AllowedConditions), input.BundlePrice, input.Notes, input.Image.Data, input.Image.MimeType, id}
+		updateQuery = `UPDATE bundles SET name = $1, supplier_id = $2, category = $3, allowed_conditions = string_to_array($4, '||'), bundle_price = $5, notes = $6, bundle_image = $7, bundle_image_mime_type = $8, out_of_stock_on_interested = $9, updated_at = NOW() WHERE id = $10`
+		args = []any{input.Name, input.SupplierID, input.Category, joinConditions(input.AllowedConditions), input.BundlePrice, input.Notes, input.Image.Data, input.Image.MimeType, input.OutOfStockOnInterested, id}
 	}
 	res, err := tx.ExecContext(ctx, updateQuery, args...)
 	if err != nil {
@@ -141,7 +141,7 @@ func (s *PostgresStore) Update(id int, input UpdateInput) (Bundle, error) {
 
 func (s *PostgresStore) Publish(id int) (Bundle, error) {
 	ctx := context.Background()
-	query := `UPDATE bundles b SET is_published = TRUE, published_at = NOW(), updated_at = NOW() WHERE b.id = $1 AND NOT EXISTS (SELECT 1 FROM bundle_books bb JOIN books bk ON bk.id = bb.book_id WHERE bb.bundle_id = b.id AND bk.in_stock = FALSE) RETURNING b.id`
+	query := `UPDATE bundles b SET is_published = TRUE, published_at = NOW(), unpublished_reason = '', updated_at = NOW() WHERE b.id = $1 AND b.in_stock = TRUE AND NOT EXISTS (SELECT 1 FROM bundle_books bb JOIN books bk ON bk.id = bb.book_id WHERE bb.bundle_id = b.id AND bk.in_stock = FALSE) RETURNING b.id`
 
 	var bundleID int
 	if err := s.db.QueryRowContext(ctx, query, id).Scan(&bundleID); err != nil {
@@ -170,7 +170,7 @@ func (s *PostgresStore) Publish(id int) (Bundle, error) {
 
 func (s *PostgresStore) Unpublish(id int) (Bundle, error) {
 	ctx := context.Background()
-	query := `UPDATE bundles SET is_published = FALSE, unpublished_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING id`
+	query := `UPDATE bundles SET is_published = FALSE, unpublished_at = NOW(), unpublished_reason = '', updated_at = NOW() WHERE id = $1 RETURNING id`
 	var bundleID int
 	if err := s.db.QueryRowContext(ctx, query, id).Scan(&bundleID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -224,14 +224,14 @@ func (s *PostgresStore) GetImage(id int) (Image, error) {
 }
 
 func queryBundleByID(ctx context.Context, db queryRowContextExecutor, id int) (Bundle, error) {
-	query := `SELECT b.id, b.name, b.supplier_id, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, b.notes, b.bundle_image_mime_type, b.is_published, b.published_at, b.unpublished_at FROM bundles b JOIN suppliers s ON s.id = b.supplier_id WHERE b.id = $1`
+	query := `SELECT b.id, b.name, b.supplier_id, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, b.notes, b.in_stock, b.out_of_stock_on_interested, b.bundle_image_mime_type, b.is_published, b.published_at, b.unpublished_at FROM bundles b JOIN suppliers s ON s.id = b.supplier_id WHERE b.id = $1`
 	row := db.QueryRowContext(ctx, query, id)
 
 	var bundle Bundle
 	var allowedConditions string
 	var publishedAt sql.NullTime
 	var unpublishedAt sql.NullTime
-	if err := row.Scan(&bundle.ID, &bundle.Name, &bundle.SupplierID, &bundle.SupplierName, &bundle.Category, &allowedConditions, &bundle.BundlePrice, &bundle.Notes, &bundle.ImageMimeType, &bundle.IsPublished, &publishedAt, &unpublishedAt); err != nil {
+	if err := row.Scan(&bundle.ID, &bundle.Name, &bundle.SupplierID, &bundle.SupplierName, &bundle.Category, &allowedConditions, &bundle.BundlePrice, &bundle.Notes, &bundle.InStock, &bundle.OutOfStockOnInterested, &bundle.ImageMimeType, &bundle.IsPublished, &publishedAt, &unpublishedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Bundle{}, ErrNotFound
 		}
