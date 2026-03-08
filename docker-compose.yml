@@ -7,7 +7,7 @@ services:
     restart: "no"
     environment:
       DATABASE_URL: postgres://sbd:sbd@postgres:5432/sbd?sslmode=disable
-    command: ["sbd-migrate"]
+    entrypoint: ["sbd-migrate"]
     depends_on:
       postgres:
         condition: service_healthy
