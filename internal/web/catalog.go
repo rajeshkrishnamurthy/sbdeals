@@ -146,7 +146,7 @@ func (s *Server) buildCatalogBookItem(itemID int) (catalogItemResponse, bool, er
 		Type:               string(rails.RailTypeBook),
 		Title:              strings.TrimSpace(book.Title),
 		CurrentPriceText:   catalogMoney(book.MyPrice),
-		ReserveButtonLabel: "Reserve on WhatsApp",
+		ReserveButtonLabel: "I'm interested",
 	}
 	if strings.TrimSpace(book.CoverMimeType) != "" {
 		item.ImageURL = fmt.Sprintf("/admin/books/%d/cover", book.ID)
@@ -172,7 +172,7 @@ func (s *Server) buildCatalogBundleItem(itemID int) (catalogItemResponse, bool, 
 		Type:               string(rails.RailTypeBundle),
 		Title:              bundleLabel(bundle.Name, bundle.ID),
 		CurrentPriceText:   catalogMoney(bundle.BundlePrice),
-		ReserveButtonLabel: "Reserve on WhatsApp",
+		ReserveButtonLabel: "I'm interested",
 	}
 	if strings.TrimSpace(bundle.ImageMimeType) != "" {
 		item.ImageURL = fmt.Sprintf("/admin/bundles/%d/image", bundle.ID)
@@ -288,6 +288,8 @@ var catalogPageTemplate = template.Must(template.New("catalog-page").Parse(`<!do
       padding:12px 16px;
     }
     .catalog-error button:hover, .cta:hover { background:var(--accent-strong); }
+    .cta-content { display:inline-flex; align-items:center; gap:8px; }
+    .cta-icon { width:16px; height:16px; display:block; }
     .rail-list { display:grid; gap:28px; }
     .rail-section { display:grid; gap:14px; }
     .rail-header { display:flex; justify-content:space-between; align-items:flex-end; gap:16px; }

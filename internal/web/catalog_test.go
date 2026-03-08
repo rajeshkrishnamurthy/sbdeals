@@ -74,7 +74,7 @@ func TestCatalogDataReturnsPublishedRailsInBackendOrder(t *testing.T) {
 	if bundleRail.Items[0].ImageURL != "/admin/bundles/1/image" {
 		t.Fatalf("unexpected bundle image url: %+v", bundleRail.Items[0])
 	}
-	if bundleRail.Items[0].ReserveButtonLabel != "Reserve on WhatsApp" {
+	if bundleRail.Items[0].ReserveButtonLabel != "I'm interested" {
 		t.Fatalf("unexpected bundle CTA: %+v", bundleRail.Items[0])
 	}
 
