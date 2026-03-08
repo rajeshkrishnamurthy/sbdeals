@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -418,6 +419,164 @@ func TestRailItemPickerRendersCommonColumnsAndHoverPreview(t *testing.T) {
 	}
 }
 
+func TestRailPublishUnpublishMoveErrorHandling(t *testing.T) {
+	t.Run("publish not found", func(t *testing.T) {
+		s := newRailsServerWithErrorStore(rails.ErrNotFound)
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/admin/rails/1/publish", nil)
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", rr.Code)
+		}
+	})
+
+	t.Run("publish internal error", func(t *testing.T) {
+		s := newRailsServerWithErrorStore(errors.New("publish failed"))
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/admin/rails/1/publish", nil)
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d", rr.Code)
+		}
+	})
+
+	t.Run("unpublish not found", func(t *testing.T) {
+		s := newRailsServerWithErrorStore(rails.ErrNotFound)
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/admin/rails/1/unpublish", nil)
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", rr.Code)
+		}
+	})
+
+	t.Run("unpublish internal error", func(t *testing.T) {
+		s := newRailsServerWithErrorStore(errors.New("unpublish failed"))
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/admin/rails/1/unpublish", nil)
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d", rr.Code)
+		}
+	})
+
+	t.Run("move up not found", func(t *testing.T) {
+		s := newRailsServerWithErrorStore(rails.ErrNotFound)
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/admin/rails/1/move-up", nil)
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", rr.Code)
+		}
+	})
+
+	t.Run("move up internal error", func(t *testing.T) {
+		s := newRailsServerWithErrorStore(errors.New("move up failed"))
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/admin/rails/1/move-up", nil)
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d", rr.Code)
+		}
+	})
+
+	t.Run("move down not found", func(t *testing.T) {
+		s := newRailsServerWithErrorStore(rails.ErrNotFound)
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/admin/rails/1/move-down", nil)
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", rr.Code)
+		}
+	})
+
+	t.Run("move down internal error", func(t *testing.T) {
+		s := newRailsServerWithErrorStore(errors.New("move down failed"))
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/admin/rails/1/move-down", nil)
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d", rr.Code)
+		}
+	})
+}
+
+func TestRailAddRemoveItemErrorHandling(t *testing.T) {
+	t.Run("add item rail not found", func(t *testing.T) {
+		s := newRailsServerWithErrorStore(rails.ErrNotFound)
+		form := url.Values{}
+		form.Set("item_id", "1")
+		req := httptest.NewRequest(http.MethodPost, "/admin/rails/1/items/add", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rr := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", rr.Code)
+		}
+	})
+
+	t.Run("add item type validation backend error", func(t *testing.T) {
+		supplierStore := suppliers.NewMemoryStore()
+		bookStore := railsBookGetErrorStore{}
+		bundleStore := bundles.NewMemoryStore(nil, nil)
+		railStore := rails.NewMemoryStore()
+		rail, err := railStore.Create(rails.CreateInput{Title: "Book Rail", Type: rails.RailTypeBook})
+		if err != nil {
+			t.Fatalf("create rail: %v", err)
+		}
+		s := NewServerWithStores(supplierStore, bookStore, bundleStore, railStore)
+
+		form := url.Values{}
+		form.Set("item_id", "1")
+		req := httptest.NewRequest(http.MethodPost, "/admin/rails/"+strconv.Itoa(rail.ID)+"/items/add", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rr := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d", rr.Code)
+		}
+	})
+
+	t.Run("add item store error", func(t *testing.T) {
+		s := newRailsServerWithAddItemError(t, errors.New("add failed"))
+		form := url.Values{}
+		form.Set("item_id", "1")
+		req := httptest.NewRequest(http.MethodPost, "/admin/rails/1/items/add", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rr := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d", rr.Code)
+		}
+	})
+
+	t.Run("remove item rail not found", func(t *testing.T) {
+		s := newRailsServerWithErrorStore(rails.ErrNotFound)
+		form := url.Values{}
+		form.Set("item_id", "1")
+		req := httptest.NewRequest(http.MethodPost, "/admin/rails/1/items/remove", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rr := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", rr.Code)
+		}
+	})
+
+	t.Run("remove item store error", func(t *testing.T) {
+		s := newRailsServerWithErrorStore(errors.New("remove failed"))
+		form := url.Values{}
+		form.Set("item_id", "1")
+		req := httptest.NewRequest(http.MethodPost, "/admin/rails/1/items/remove", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rr := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d", rr.Code)
+		}
+	})
+}
+
 func TestRailsFormAssetServesScript(t *testing.T) {
 	s, _, _, _, _ := newRailsFixture(t)
 	rr := httptest.NewRecorder()
@@ -545,3 +704,102 @@ func newRailsFixture(t *testing.T) (*Server, *rails.MemoryStore, *books.MemorySt
 	server := NewServerWithStores(supplierStore, bookStore, bundleStore, railStore)
 	return server, railStore, bookStore, bundleStore, supplierStore
 }
+
+func newRailsServerWithErrorStore(err error) *Server {
+	supplierStore := suppliers.NewMemoryStore()
+	bookStore := books.NewMemoryStore()
+	bundleStore := bundles.NewMemoryStore(nil, nil)
+	return NewServerWithStores(supplierStore, bookStore, bundleStore, railsErrorStore{err: err})
+}
+
+type railsErrorStore struct {
+	err error
+}
+
+func (s railsErrorStore) List() ([]rails.ListItem, error) { return []rails.ListItem{}, nil }
+func (s railsErrorStore) Create(input rails.CreateInput) (rails.Rail, error) {
+	return rails.Rail{}, s.err
+}
+func (s railsErrorStore) Get(id int) (rails.Rail, error) { return rails.Rail{}, s.err }
+func (s railsErrorStore) Update(id int, input rails.UpdateInput) (rails.Rail, error) {
+	return rails.Rail{}, s.err
+}
+func (s railsErrorStore) AddItem(id int, itemID int) (rails.Rail, error) {
+	return rails.Rail{}, s.err
+}
+func (s railsErrorStore) RemoveItem(id int, itemID int) (rails.Rail, error) {
+	return rails.Rail{}, s.err
+}
+func (s railsErrorStore) Publish(id int) (rails.Rail, error)   { return rails.Rail{}, s.err }
+func (s railsErrorStore) Unpublish(id int) (rails.Rail, error) { return rails.Rail{}, s.err }
+func (s railsErrorStore) MoveUp(id int) error                  { return s.err }
+func (s railsErrorStore) MoveDown(id int) error                { return s.err }
+
+func newRailsServerWithAddItemError(t *testing.T, err error) *Server {
+	t.Helper()
+	supplierStore := suppliers.NewMemoryStore()
+	supplier, createErr := supplierStore.Create(suppliers.Input{Name: "Supplier A", WhatsApp: "+91-1", Location: "Bengaluru"})
+	if createErr != nil {
+		t.Fatalf("create supplier: %v", createErr)
+	}
+	bookStore := books.NewMemoryStore()
+	if _, createErr := bookStore.Create(books.CreateInput{
+		Title:      "Book One",
+		SupplierID: supplier.ID,
+		Category:   "Fiction",
+		Format:     "Paperback",
+		Condition:  "Very good",
+		MRP:        100,
+		MyPrice:    90,
+	}); createErr != nil {
+		t.Fatalf("create book: %v", createErr)
+	}
+	bundleStore := bundles.NewMemoryStore(nil, nil)
+	return NewServerWithStores(supplierStore, bookStore, bundleStore, railsAddItemErrorStore{addItemErr: err})
+}
+
+type railsAddItemErrorStore struct {
+	addItemErr error
+}
+
+func (s railsAddItemErrorStore) List() ([]rails.ListItem, error) { return []rails.ListItem{}, nil }
+func (s railsAddItemErrorStore) Create(input rails.CreateInput) (rails.Rail, error) {
+	return rails.Rail{}, nil
+}
+func (s railsAddItemErrorStore) Get(id int) (rails.Rail, error) {
+	return rails.Rail{ID: id, Type: rails.RailTypeBook}, nil
+}
+func (s railsAddItemErrorStore) Update(id int, input rails.UpdateInput) (rails.Rail, error) {
+	return rails.Rail{}, nil
+}
+func (s railsAddItemErrorStore) AddItem(id int, itemID int) (rails.Rail, error) {
+	return rails.Rail{}, s.addItemErr
+}
+func (s railsAddItemErrorStore) RemoveItem(id int, itemID int) (rails.Rail, error) {
+	return rails.Rail{}, nil
+}
+func (s railsAddItemErrorStore) Publish(id int) (rails.Rail, error)   { return rails.Rail{}, nil }
+func (s railsAddItemErrorStore) Unpublish(id int) (rails.Rail, error) { return rails.Rail{}, nil }
+func (s railsAddItemErrorStore) MoveUp(id int) error                  { return nil }
+func (s railsAddItemErrorStore) MoveDown(id int) error                { return nil }
+
+type railsBookGetErrorStore struct{}
+
+func (railsBookGetErrorStore) List() ([]books.ListItem, error) { return []books.ListItem{}, nil }
+func (railsBookGetErrorStore) Create(input books.CreateInput) (books.Book, error) {
+	return books.Book{}, nil
+}
+func (railsBookGetErrorStore) Get(id int) (books.Book, error) {
+	return books.Book{}, errors.New("book store failure")
+}
+func (railsBookGetErrorStore) GetCover(id int) (books.Cover, error) {
+	return books.Cover{}, books.ErrNotFound
+}
+func (railsBookGetErrorStore) Update(id int, input books.UpdateInput) (books.Book, error) {
+	return books.Book{}, nil
+}
+func (railsBookGetErrorStore) SetInStock(id int, inStock bool) (books.Book, error) {
+	return books.Book{}, nil
+}
+func (railsBookGetErrorStore) Publish(id int) (books.Book, error)   { return books.Book{}, nil }
+func (railsBookGetErrorStore) Unpublish(id int) (books.Book, error) { return books.Book{}, nil }

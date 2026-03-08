@@ -198,6 +198,33 @@ func TestMemoryStoreGetImage(t *testing.T) {
 	}
 }
 
+func TestOutOfStockTitlesFromBooksSorted(t *testing.T) {
+	books := []BundleBook{
+		{Title: "Gamma", InStock: false},
+		{Title: "Alpha", InStock: false},
+		{Title: "Beta", InStock: true},
+	}
+	titles := outOfStockTitlesFromBooks(books)
+	expected := []string{"Alpha", "Gamma"}
+	if !reflect.DeepEqual(titles, expected) {
+		t.Fatalf("expected sorted out-of-stock titles %v, got %v", expected, titles)
+	}
+}
+
+func TestCloneFloatPointer(t *testing.T) {
+	if cloneFloatPointer(nil) != nil {
+		t.Fatalf("expected nil clone for nil pointer")
+	}
+	value := 12.5
+	cloned := cloneFloatPointer(&value)
+	if cloned == nil || *cloned != value {
+		t.Fatalf("expected cloned pointer with same value")
+	}
+	if cloned == &value {
+		t.Fatalf("expected different pointer address")
+	}
+}
+
 func TestMemoryStoreListBooksForPicker(t *testing.T) {
 	store := NewMemoryStore(nil, []PickerBook{
 		{BookID: 20, Title: "B"},
