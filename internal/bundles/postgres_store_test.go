@@ -17,10 +17,10 @@ func TestPostgresStoreListAndListBooksForPicker(t *testing.T) {
 	}
 	defer db.Close()
 
-	listQuery := `SELECT b.id, b.name, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, COUNT(bb.book_id) AS book_count, COALESCE(SUM(bk.mrp), 0) AS bundle_mrp, OCTET_LENGTH(b.bundle_image) > 0 AS has_image, b.is_published, b.published_at, b.unpublished_at FROM bundles b JOIN suppliers s ON s.id = b.supplier_id LEFT JOIN bundle_books bb ON bb.bundle_id = b.id LEFT JOIN books bk ON bk.id = bb.book_id GROUP BY b.id, b.name, s.name, b.category, b.allowed_conditions, b.bundle_price, b.bundle_image, b.is_published, b.published_at, b.unpublished_at ORDER BY b.id ASC`
+	listQuery := `SELECT b.id, b.name, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, COUNT(bb.book_id) AS book_count, COALESCE(SUM(bk.mrp), 0) AS bundle_mrp, COALESCE(OCTET_LENGTH(b.bundle_image), 0) > 0 AS has_image, b.is_published, b.published_at, b.unpublished_at FROM bundles b JOIN suppliers s ON s.id = b.supplier_id LEFT JOIN bundle_books bb ON bb.bundle_id = b.id LEFT JOIN books bk ON bk.id = bb.book_id GROUP BY b.id, b.name, s.name, b.category, b.allowed_conditions, b.bundle_price, b.bundle_image, b.is_published, b.published_at, b.unpublished_at ORDER BY b.id ASC`
 	mock.ExpectQuery(regexp.QuoteMeta(listQuery)).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "supplier_name", "category", "allowed_conditions", "bundle_price", "book_count", "bundle_mrp", "has_image", "is_published", "published_at", "unpublished_at"}).
-			AddRow(1, "Starter", "A1", "Fiction", "Very good||Good as new", 499.0, 2, 900.0, true, false, nil, time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC)))
+			AddRow(1, "Starter", "A1", "Fiction", "Very good||Good as new", 499.0, 2, 900.0, false, false, nil, time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC)))
 
 	pickerQuery := `SELECT id, title, author, supplier_id, is_box_set, category, condition, mrp, my_price, bundle_price, in_stock FROM books ORDER BY id ASC`
 	mock.ExpectQuery(regexp.QuoteMeta(pickerQuery)).
@@ -38,8 +38,8 @@ func TestPostgresStoreListAndListBooksForPicker(t *testing.T) {
 	if len(items[0].AllowedConditions) != 2 {
 		t.Fatalf("expected two conditions, got %+v", items[0].AllowedConditions)
 	}
-	if !items[0].HasImage {
-		t.Fatalf("expected list item to report has image")
+	if items[0].HasImage {
+		t.Fatalf("expected list item to report no image for NULL bundle_image")
 	}
 
 	picker, err := store.ListBooksForPicker()

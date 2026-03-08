@@ -20,7 +20,7 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 }
 
 func (s *PostgresStore) List() ([]ListItem, error) {
-	query := `SELECT b.id, b.name, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, COUNT(bb.book_id) AS book_count, COALESCE(SUM(bk.mrp), 0) AS bundle_mrp, OCTET_LENGTH(b.bundle_image) > 0 AS has_image, b.is_published, b.published_at, b.unpublished_at FROM bundles b JOIN suppliers s ON s.id = b.supplier_id LEFT JOIN bundle_books bb ON bb.bundle_id = b.id LEFT JOIN books bk ON bk.id = bb.book_id GROUP BY b.id, b.name, s.name, b.category, b.allowed_conditions, b.bundle_price, b.bundle_image, b.is_published, b.published_at, b.unpublished_at ORDER BY b.id ASC`
+	query := `SELECT b.id, b.name, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, COUNT(bb.book_id) AS book_count, COALESCE(SUM(bk.mrp), 0) AS bundle_mrp, COALESCE(OCTET_LENGTH(b.bundle_image), 0) > 0 AS has_image, b.is_published, b.published_at, b.unpublished_at FROM bundles b JOIN suppliers s ON s.id = b.supplier_id LEFT JOIN bundle_books bb ON bb.bundle_id = b.id LEFT JOIN books bk ON bk.id = bb.book_id GROUP BY b.id, b.name, s.name, b.category, b.allowed_conditions, b.bundle_price, b.bundle_image, b.is_published, b.published_at, b.unpublished_at ORDER BY b.id ASC`
 	rows, err := s.db.QueryContext(context.Background(), query)
 	if err != nil {
 		return nil, err
