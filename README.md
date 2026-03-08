@@ -38,3 +38,14 @@ If port `8080` is already in use locally:
 ```bash
 APP_PORT=8081 docker compose up -d --build
 ```
+
+## DB UI (Adminer)
+
+Adminer is included in `docker compose`.
+
+- URL: `http://localhost:8081` (or `${ADMINER_PORT}`)
+- System: `PostgreSQL`
+- Server: `postgres`
+- Username: `sbd`
+- Password: `sbd`
+- Database: `sbd`
