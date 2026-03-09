@@ -56,7 +56,7 @@ func (s *PostgresStore) ConvertToInterested(id int, input ConvertInput) (Enquiry
 	}()
 
 	query := `UPDATE enquiries SET status = 'interested', customer_id = $1, buyer_note = $2, last_modified_by = $3, l_m_at = NOW() WHERE id = $4 AND status = 'clicked' RETURNING ` + enquiryScanColumns
-	row := tx.QueryRowContext(ctx, query, input.CustomerID, input.Note, input.ModifiedBy, id)
+	row := tx.QueryRowContext(ctx, query, input.CustomerID, nullableTrimmed(input.Note), input.ModifiedBy, id)
 	updated, err := scanEnquiry(row)
 	if err == nil {
 		if err := applyInterestedTransitionSideEffects(ctx, tx, updated); err != nil {

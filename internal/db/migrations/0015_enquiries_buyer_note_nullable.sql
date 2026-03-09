@@ -1,0 +1,3 @@
+ALTER TABLE enquiries
+    ALTER COLUMN buyer_note DROP NOT NULL,
+    ALTER COLUMN buyer_note DROP DEFAULT;

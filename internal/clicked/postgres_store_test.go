@@ -182,7 +182,7 @@ func TestPostgresStoreConvertToInterestedSkipsSideEffectsWhenDisabled(t *testing
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta(updateQuery)).
-		WithArgs(5, "", "system-admin", 11).
+		WithArgs(5, nil, "system-admin", 11).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "item_id", "item_type", "item_title", "source_page", "source_rail_id", "source_rail_title", "status", "customer_id", "buyer_note", "order_amount", "last_modified_by", "l_m_at", "created_at"}).
 			AddRow(11, 44, "BOOK", "Book Disabled", "catalog", 3, "Deals", "interested", 5, "", nil, "system-admin", now, now))
 	mock.ExpectQuery(regexp.QuoteMeta(bookFlagQuery)).
@@ -220,7 +220,7 @@ func TestPostgresStoreConvertToInterestedNotFoundPaths(t *testing.T) {
 
 		mock.ExpectBegin()
 		mock.ExpectQuery(regexp.QuoteMeta(updateQuery)).
-			WithArgs(1, "", "system-admin", 42).
+			WithArgs(1, nil, "system-admin", 42).
 			WillReturnError(sql.ErrNoRows)
 		mock.ExpectQuery(regexp.QuoteMeta(getByIDQuery)).
 			WithArgs(42).
@@ -257,7 +257,7 @@ func TestPostgresStoreConvertToInterestedNotFoundPaths(t *testing.T) {
 
 		mock.ExpectBegin()
 		mock.ExpectQuery(regexp.QuoteMeta(updateQuery)).
-			WithArgs(1, "", "system-admin", 77).
+			WithArgs(1, nil, "system-admin", 77).
 			WillReturnError(sql.ErrNoRows)
 		mock.ExpectQuery(regexp.QuoteMeta(getByIDQuery)).
 			WithArgs(77).
@@ -419,4 +419,50 @@ func TestPostgresStoreConvertToOrderedAddressAndTransitionGuards(t *testing.T) {
 			t.Fatalf("unmet SQL expectations: %v", err)
 		}
 	})
+}
+
+func TestPostgresStoreConvertToOrderedStoresEmptyNoteAsEmptyString(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	lockByIDQuery := `SELECT id, item_id, item_type, item_title, source_page, source_rail_id, source_rail_title, status, customer_id, buyer_note, order_amount, last_modified_by, l_m_at, created_at FROM enquiries WHERE id = $1 FOR UPDATE`
+	customerAddressQuery := `SELECT address FROM customers WHERE id = $1 FOR UPDATE`
+	updateOrderedQuery := `UPDATE enquiries SET status = 'ordered', order_amount = $1, buyer_note = $2, last_modified_by = $3, l_m_at = NOW() WHERE id = $4 AND status = 'interested' RETURNING id, item_id, item_type, item_title, source_page, source_rail_id, source_rail_title, status, customer_id, buyer_note, order_amount, last_modified_by, l_m_at, created_at`
+	now := time.Date(2026, time.March, 10, 6, 0, 0, 0, time.UTC)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(lockByIDQuery)).
+		WithArgs(81).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "item_id", "item_type", "item_title", "source_page", "source_rail_id", "source_rail_title", "status", "customer_id", "buyer_note", "order_amount", "last_modified_by", "l_m_at", "created_at"}).
+			AddRow(81, 5, "BOOK", "Book Five", "catalog", 1, "Fresh", "interested", 4, "prior", nil, "system-admin", now, now))
+	mock.ExpectQuery(regexp.QuoteMeta(customerAddressQuery)).
+		WithArgs(4).
+		WillReturnRows(sqlmock.NewRows([]string{"address"}).AddRow("Addr"))
+	mock.ExpectQuery(regexp.QuoteMeta(updateOrderedQuery)).
+		WithArgs(219, nil, "system-admin", 81).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "item_id", "item_type", "item_title", "source_page", "source_rail_id", "source_rail_title", "status", "customer_id", "buyer_note", "order_amount", "last_modified_by", "l_m_at", "created_at"}).
+			AddRow(81, 5, "BOOK", "Book Five", "catalog", 1, "Fresh", "ordered", 4, nil, 219, "system-admin", now, now))
+	mock.ExpectCommit()
+
+	store := NewPostgresStore(db)
+	updated, alreadyOrdered, err := store.ConvertToOrdered(81, OrderInput{
+		OrderAmount: 219,
+		Note:        "",
+		ModifiedBy:  "system-admin",
+	})
+	if err != nil {
+		t.Fatalf("convert to ordered returned error: %v", err)
+	}
+	if alreadyOrdered {
+		t.Fatalf("expected alreadyOrdered=false")
+	}
+	if updated.Note != "" {
+		t.Fatalf("expected empty note, got %q", updated.Note)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
 }
