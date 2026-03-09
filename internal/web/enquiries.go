@@ -136,14 +136,17 @@ func enquiriesRedirect(status clicked.Status, flash string, errMsg string) strin
 }
 
 func resolveCustomerIDForConversion(r *http.Request, customerStore customers.Store) (int, string) {
+	quickName := strings.TrimSpace(r.FormValue("quick_customer_name"))
+	quickMobile := strings.TrimSpace(r.FormValue("quick_customer_mobile"))
 	if customerID, ok := parseSelectedCustomerID(r.FormValue("customer_id")); ok {
+		if quickName != "" || quickMobile != "" {
+			return 0, "Choose either existing customer or quick-create details."
+		}
 		if _, err := customerStore.Get(customerID); err == nil {
 			return customerID, ""
 		}
 		return 0, "Please choose a valid customer."
 	}
-	quickName := strings.TrimSpace(r.FormValue("quick_customer_name"))
-	quickMobile := strings.TrimSpace(r.FormValue("quick_customer_mobile"))
 	return resolveQuickCreateCustomerID(customerStore, quickName, quickMobile)
 }
 

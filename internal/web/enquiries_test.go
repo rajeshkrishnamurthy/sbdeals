@@ -11,6 +11,7 @@ import (
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/books"
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/bundles"
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/clicked"
+	"github.com/rajeshkrishnamurthy/sbdeals/internal/customers"
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/rails"
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/suppliers"
 )
@@ -23,7 +24,7 @@ func TestEnquiriesListDefaultsToClickedTab(t *testing.T) {
 		ItemTitle:  "Bundle One",
 		SourcePage: "catalog",
 	})
-	server := newEnquiriesTestServer(clickedStore)
+	server, _ := newEnquiriesTestServer(clickedStore)
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/admin/enquiries", nil)
@@ -46,14 +47,14 @@ func TestConvertEnquiryToInterestedSuccessAndIdempotent(t *testing.T) {
 		ItemTitle:  "Book Five",
 		SourcePage: "catalog",
 	})
-	server := newEnquiriesTestServer(clickedStore)
+	server, customerStore := newEnquiriesTestServer(clickedStore)
+	customer, _ := customerStore.Create(customers.CreateInput{Name: "Rajesh", Mobile: "9876543210"})
 
 	form := url.Values{}
-	form.Set("buyer_name", "Rajesh")
-	form.Set("buyer_phone", "9876543210")
-	form.Set("buyer_note", "Evening call")
+	form.Set("customer_id", strconv.Itoa(customer.ID))
+	form.Set("note", "Evening call")
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/admin/enquiries/"+strconvI(created.ID)+"/convert", strings.NewReader(form.Encode()))
+	req := httptest.NewRequest(http.MethodPost, "/admin/enquiries/"+strconv.Itoa(created.ID)+"/convert", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	server.Handler().ServeHTTP(rr, req)
 
@@ -70,12 +71,12 @@ func TestConvertEnquiryToInterestedSuccessAndIdempotent(t *testing.T) {
 		t.Fatalf("expected clicked tab to be empty after conversion, got %+v", clickedRows)
 	}
 	interestedRows, _ := clickedStore.ListByStatus(clicked.StatusInterested)
-	if len(interestedRows) != 1 || interestedRows[0].BuyerPhone != "+919876543210" {
+	if len(interestedRows) != 1 || interestedRows[0].CustomerID != customer.ID {
 		t.Fatalf("unexpected interested rows: %+v", interestedRows)
 	}
 
 	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/admin/enquiries/"+strconvI(created.ID)+"/convert", strings.NewReader(form.Encode()))
+	req = httptest.NewRequest(http.MethodPost, "/admin/enquiries/"+strconv.Itoa(created.ID)+"/convert", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	server.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusSeeOther {
@@ -83,6 +84,33 @@ func TestConvertEnquiryToInterestedSuccessAndIdempotent(t *testing.T) {
 	}
 	if !strings.Contains(rr.Header().Get("Location"), "Already+converted.") {
 		t.Fatalf("expected already converted feedback, got %q", rr.Header().Get("Location"))
+	}
+}
+
+func TestConvertEnquiryQuickCreateCustomerWhenNotSelected(t *testing.T) {
+	clickedStore := clicked.NewMemoryStore()
+	created, _ := clickedStore.CreateClicked(clicked.CreateInput{
+		ItemID:     5,
+		ItemType:   clicked.ItemTypeBook,
+		ItemTitle:  "Book Five",
+		SourcePage: "catalog",
+	})
+	server, _ := newEnquiriesTestServer(clickedStore)
+
+	form := url.Values{}
+	form.Set("quick_customer_name", "Asha")
+	form.Set("quick_customer_mobile", "9123456789")
+	form.Set("note", "quick create")
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/admin/enquiries/"+strconv.Itoa(created.ID)+"/convert", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Header().Get("Location"), "flash=Enquiry+converted+to+Interested.") {
+		t.Fatalf("unexpected redirect: %q", rr.Header().Get("Location"))
 	}
 }
 
@@ -94,31 +122,68 @@ func TestConvertEnquiryValidation(t *testing.T) {
 		ItemTitle:  "Book Five",
 		SourcePage: "catalog",
 	})
-	server := newEnquiriesTestServer(clickedStore)
+	server, _ := newEnquiriesTestServer(clickedStore)
 
 	form := url.Values{}
-	form.Set("buyer_name", "Rajesh")
-	form.Set("buyer_phone", "123")
+	form.Set("note", "x")
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/admin/enquiries/"+strconvI(created.ID)+"/convert", strings.NewReader(form.Encode()))
+	req := httptest.NewRequest(http.MethodPost, "/admin/enquiries/"+strconv.Itoa(created.ID)+"/convert", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	server.Handler().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusSeeOther {
 		t.Fatalf("expected 303, got %d", rr.Code)
 	}
-	if !strings.Contains(rr.Header().Get("Location"), "valid+10-digit+India+mobile+number") {
+	if !strings.Contains(rr.Header().Get("Location"), "Customer+selection+is+required.") {
 		t.Fatalf("expected validation redirect, got %q", rr.Header().Get("Location"))
+	}
+}
+
+func TestConvertEnquiryRejectsMixedExistingAndQuickCreate(t *testing.T) {
+	clickedStore := clicked.NewMemoryStore()
+	created, _ := clickedStore.CreateClicked(clicked.CreateInput{
+		ItemID:     6,
+		ItemType:   clicked.ItemTypeBook,
+		ItemTitle:  "Book Six",
+		SourcePage: "catalog",
+	})
+	server, customerStore := newEnquiriesTestServer(clickedStore)
+	customer, _ := customerStore.Create(customers.CreateInput{Name: "Rajesh", Mobile: "9876543210"})
+
+	form := url.Values{}
+	form.Set("customer_id", strconv.Itoa(customer.ID))
+	form.Set("quick_customer_name", "Asha")
+	form.Set("quick_customer_mobile", "9123456789")
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/admin/enquiries/"+strconv.Itoa(created.ID)+"/convert", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", rr.Code)
+	}
+	location := rr.Header().Get("Location")
+	if !strings.Contains(location, "Choose+either+existing+customer+or+quick-create+details.") {
+		t.Fatalf("expected mixed input validation error, got %q", location)
+	}
+
+	clickedRows, _ := clickedStore.ListByStatus(clicked.StatusClicked)
+	if len(clickedRows) != 1 {
+		t.Fatalf("expected enquiry to remain clicked, got %+v", clickedRows)
+	}
+	interestedRows, _ := clickedStore.ListByStatus(clicked.StatusInterested)
+	if len(interestedRows) != 0 {
+		t.Fatalf("expected no interested rows, got %+v", interestedRows)
 	}
 }
 
 func TestConvertEnquiryNotFoundReturns404(t *testing.T) {
 	clickedStore := clicked.NewMemoryStore()
-	server := newEnquiriesTestServer(clickedStore)
+	server, customerStore := newEnquiriesTestServer(clickedStore)
+	customer, _ := customerStore.Create(customers.CreateInput{Name: "Rajesh", Mobile: "9876543210"})
 
 	form := url.Values{}
-	form.Set("buyer_name", "Rajesh")
-	form.Set("buyer_phone", "9876543210")
+	form.Set("customer_id", strconv.Itoa(customer.ID))
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/admin/enquiries/999/convert", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -131,7 +196,7 @@ func TestConvertEnquiryNotFoundReturns404(t *testing.T) {
 
 func TestEnquiryItemMethodGuard(t *testing.T) {
 	clickedStore := clicked.NewMemoryStore()
-	server := newEnquiriesTestServer(clickedStore)
+	server, _ := newEnquiriesTestServer(clickedStore)
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/admin/enquiries/1/convert", nil)
@@ -142,7 +207,7 @@ func TestEnquiryItemMethodGuard(t *testing.T) {
 	}
 }
 
-func TestEnquiriesInterestedTabRendersConvertedRows(t *testing.T) {
+func TestEnquiriesInterestedTabRendersCustomerDetails(t *testing.T) {
 	clickedStore := clicked.NewMemoryStore()
 	created, _ := clickedStore.CreateClicked(clicked.CreateInput{
 		ItemID:     8,
@@ -150,14 +215,14 @@ func TestEnquiriesInterestedTabRendersConvertedRows(t *testing.T) {
 		ItemTitle:  "Bundle Eight",
 		SourcePage: "catalog",
 	})
+	server, customerStore := newEnquiriesTestServer(clickedStore)
+	customer, _ := customerStore.Create(customers.CreateInput{Name: "Rajesh", Mobile: "9876543210"})
 	_, _, _ = clickedStore.ConvertToInterested(created.ID, clicked.ConvertInput{
-		BuyerName:   "Rajesh",
-		BuyerPhone:  "+919876543210",
-		BuyerNote:   "note",
-		ConvertedBy: "system-admin",
+		CustomerID: customer.ID,
+		Note:       "note",
+		ModifiedBy: "system-admin",
 	})
 
-	server := newEnquiriesTestServer(clickedStore)
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/admin/enquiries?status=interested", nil)
 	server.Handler().ServeHTTP(rr, req)
@@ -166,19 +231,19 @@ func TestEnquiriesInterestedTabRendersConvertedRows(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	if !strings.Contains(body, "Bundle Eight") || !strings.Contains(body, "919876543210") {
-		t.Fatalf("expected interested row details in body, got: %s", body)
+	if !strings.Contains(body, "Bundle Eight") || !strings.Contains(body, customer.Name) || !strings.Contains(body, customer.Mobile) {
+		t.Fatalf("expected interested row customer details in body, got: %s", body)
 	}
 }
 
-func newEnquiriesTestServer(clickedStore clicked.Store) *Server {
-	return NewServerWithStoresAndClicked(
+func newEnquiriesTestServer(clickedStore clicked.Store) (*Server, *customers.MemoryStore) {
+	customerStore := customers.NewMemoryStore()
+	return NewServerWithAllStores(
 		suppliers.NewMemoryStore(),
 		books.NewMemoryStore(),
 		bundles.NewMemoryStore(nil, nil),
 		rails.NewMemoryStore(),
 		clickedStore,
-	)
+		customerStore,
+	), customerStore
 }
-
-func strconvI(v int) string { return strconv.Itoa(v) }
