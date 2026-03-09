@@ -101,6 +101,7 @@ func NewServerWithAllStores(store suppliers.Store, bookStore books.Store, bundle
 	s.mux.HandleFunc("/assets/rails-form.js", s.handleRailsFormJSAsset)
 	s.mux.HandleFunc("/assets/catalog.js", s.handleCatalogJSAsset)
 	s.mux.HandleFunc("/assets/customers-form.js", s.handleCustomersFormJSAsset)
+	s.mux.HandleFunc("/assets/enquiries-form.js", s.handleEnquiriesFormJSAsset)
 
 	return s
 }

@@ -52,6 +52,17 @@ func (s *MemoryStore) ListByStatus(status Status) ([]Enquiry, error) {
 	return out, nil
 }
 
+func (s *MemoryStore) Get(id int) (Enquiry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	index := s.indexByID(id)
+	if index < 0 {
+		return Enquiry{}, ErrNotFound
+	}
+	return cloneEnquiry(s.items[index]), nil
+}
+
 func (s *MemoryStore) ConvertToInterested(id int, input ConvertInput) (Enquiry, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -66,11 +77,37 @@ func (s *MemoryStore) ConvertToInterested(id int, input ConvertInput) (Enquiry, 
 	}
 	now := time.Now().UTC()
 	current.Status = StatusInterested
-	current.BuyerName = input.BuyerName
-	current.BuyerPhone = input.BuyerPhone
-	current.BuyerNote = input.BuyerNote
-	current.ConvertedBy = input.ConvertedBy
-	current.ConvertedAt = &now
+	current.CustomerID = input.CustomerID
+	current.Note = input.Note
+	current.LastModifiedBy = input.ModifiedBy
+	current.LastModifiedAt = &now
+	s.items[index] = current
+	return cloneEnquiry(current), false, nil
+}
+
+func (s *MemoryStore) ConvertToOrdered(id int, input OrderInput) (Enquiry, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	index := s.indexByID(id)
+	if index < 0 {
+		return Enquiry{}, false, ErrNotFound
+	}
+	current := s.items[index]
+	if current.Status == StatusOrdered {
+		return cloneEnquiry(current), true, nil
+	}
+	if current.Status != StatusInterested {
+		return Enquiry{}, false, ErrInvalidTransition
+	}
+
+	now := time.Now().UTC()
+	orderAmount := input.OrderAmount
+	current.Status = StatusOrdered
+	current.OrderAmount = &orderAmount
+	current.Note = input.Note
+	current.LastModifiedBy = input.ModifiedBy
+	current.LastModifiedAt = &now
 	s.items[index] = current
 	return cloneEnquiry(current), false, nil
 }
@@ -86,9 +123,13 @@ func (s *MemoryStore) indexByID(id int) int {
 
 func cloneEnquiry(in Enquiry) Enquiry {
 	out := in
-	if in.ConvertedAt != nil {
-		ts := *in.ConvertedAt
-		out.ConvertedAt = &ts
+	if in.LastModifiedAt != nil {
+		ts := *in.LastModifiedAt
+		out.LastModifiedAt = &ts
+	}
+	if in.OrderAmount != nil {
+		amount := *in.OrderAmount
+		out.OrderAmount = &amount
 	}
 	return out
 }

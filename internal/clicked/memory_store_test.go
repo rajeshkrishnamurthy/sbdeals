@@ -29,10 +29,9 @@ func TestMemoryStoreCreateListAndConvert(t *testing.T) {
 	}
 
 	converted, alreadyConverted, err := store.ConvertToInterested(created.ID, ConvertInput{
-		BuyerName:   "Rajesh",
-		BuyerPhone:  "+919999999999",
-		BuyerNote:   "Call after 6",
-		ConvertedBy: "system-admin",
+		CustomerID: 1,
+		Note:       "Call after 6",
+		ModifiedBy: "system-admin",
 	})
 	if err != nil {
 		t.Fatalf("convert returned error: %v", err)
@@ -40,14 +39,16 @@ func TestMemoryStoreCreateListAndConvert(t *testing.T) {
 	if alreadyConverted {
 		t.Fatalf("expected first conversion to not be already converted")
 	}
-	if converted.Status != StatusInterested || converted.ConvertedAt == nil {
+	if converted.Status != StatusInterested || converted.LastModifiedAt == nil {
 		t.Fatalf("unexpected converted enquiry: %+v", converted)
+	}
+	if converted.CustomerID != 1 {
+		t.Fatalf("expected customer linkage, got %+v", converted)
 	}
 
 	_, alreadyConverted, err = store.ConvertToInterested(created.ID, ConvertInput{
-		BuyerName:   "Rajesh",
-		BuyerPhone:  "+919999999999",
-		ConvertedBy: "system-admin",
+		CustomerID: 1,
+		ModifiedBy: "system-admin",
 	})
 	if err != nil {
 		t.Fatalf("second convert returned error: %v", err)
@@ -57,16 +58,78 @@ func TestMemoryStoreCreateListAndConvert(t *testing.T) {
 	}
 }
 
-func TestNormalizeIndiaPhone(t *testing.T) {
-	normalized, ok := NormalizeIndiaPhone(" 98765 43210 ")
-	if !ok || normalized != "+919876543210" {
-		t.Fatalf("unexpected normalization: %q %v", normalized, ok)
+func TestMemoryStoreConvertToOrdered(t *testing.T) {
+	store := NewMemoryStore()
+	created, err := store.CreateClicked(CreateInput{
+		ItemID:     18,
+		ItemType:   ItemTypeBundle,
+		ItemTitle:  "Bundle Eighteen",
+		SourcePage: "catalog",
+	})
+	if err != nil {
+		t.Fatalf("create returned error: %v", err)
 	}
-	if _, ok := NormalizeIndiaPhone("12345"); ok {
-		t.Fatalf("expected invalid short number")
+	_, _, err = store.ConvertToInterested(created.ID, ConvertInput{
+		CustomerID: 99,
+		Note:       "Interested",
+		ModifiedBy: "system-admin",
+	})
+	if err != nil {
+		t.Fatalf("convert to interested returned error: %v", err)
 	}
-	if _, ok := NormalizeIndiaPhone("5234567890"); ok {
-		t.Fatalf("expected invalid starting digit")
+
+	ordered, alreadyOrdered, err := store.ConvertToOrdered(created.ID, OrderInput{
+		OrderAmount: 499,
+		Note:        "Paid in cash",
+		ModifiedBy:  "system-admin",
+	})
+	if err != nil {
+		t.Fatalf("convert to ordered returned error: %v", err)
+	}
+	if alreadyOrdered {
+		t.Fatalf("expected first order conversion to not be already ordered")
+	}
+	if ordered.Status != StatusOrdered {
+		t.Fatalf("expected ordered status, got %q", ordered.Status)
+	}
+	if ordered.OrderAmount == nil || *ordered.OrderAmount != 499 {
+		t.Fatalf("expected order amount 499, got %+v", ordered.OrderAmount)
+	}
+	if ordered.LastModifiedAt == nil {
+		t.Fatalf("expected modified timestamp to be set")
+	}
+
+	_, alreadyOrdered, err = store.ConvertToOrdered(created.ID, OrderInput{
+		OrderAmount: 999,
+		Note:        "Should not overwrite",
+		ModifiedBy:  "system-admin",
+	})
+	if err != nil {
+		t.Fatalf("second convert to ordered returned error: %v", err)
+	}
+	if !alreadyOrdered {
+		t.Fatalf("expected idempotent already-ordered flag")
+	}
+}
+
+func TestMemoryStoreConvertToOrderedRejectsInvalidTransition(t *testing.T) {
+	store := NewMemoryStore()
+	created, err := store.CreateClicked(CreateInput{
+		ItemID:     22,
+		ItemType:   ItemTypeBook,
+		ItemTitle:  "Book Twenty-Two",
+		SourcePage: "catalog",
+	})
+	if err != nil {
+		t.Fatalf("create returned error: %v", err)
+	}
+
+	_, _, err = store.ConvertToOrdered(created.ID, OrderInput{
+		OrderAmount: 199,
+		ModifiedBy:  "system-admin",
+	})
+	if err != ErrInvalidTransition {
+		t.Fatalf("expected ErrInvalidTransition, got %v", err)
 	}
 }
 
@@ -74,7 +137,7 @@ func TestStatusAndItemTypeValidation(t *testing.T) {
 	if !IsValidItemType(ItemTypeBook) || !IsValidItemType(ItemTypeBundle) || IsValidItemType(ItemType("X")) {
 		t.Fatalf("unexpected item-type validation behavior")
 	}
-	if !IsValidStatus(StatusClicked) || !IsValidStatus(StatusInterested) || IsValidStatus(Status("unknown")) {
+	if !IsValidStatus(StatusClicked) || !IsValidStatus(StatusInterested) || !IsValidStatus(StatusOrdered) || IsValidStatus(Status("unknown")) {
 		t.Fatalf("unexpected status validation behavior")
 	}
 }

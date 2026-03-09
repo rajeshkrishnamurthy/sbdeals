@@ -29,11 +29,18 @@ func (s *Server) handleEnquiryItem(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if action != "convert" || r.Method != http.MethodPost {
+	if r.Method != http.MethodPost {
 		writeMethodNotAllowed(w, http.MethodPost)
 		return
 	}
-	s.convertEnquiryToInterested(w, r, id)
+	switch action {
+	case "convert":
+		s.convertEnquiryToInterested(w, r, id)
+	case "order":
+		s.convertEnquiryToOrdered(w, r, id)
+	default:
+		http.NotFound(w, r)
+	}
 }
 
 func parseEnquiryPath(path string) (int, string, bool) {
@@ -43,7 +50,10 @@ func parseEnquiryPath(path string) (int, string, bool) {
 	}
 	rest := strings.TrimPrefix(path, prefix)
 	parts := strings.Split(rest, "/")
-	if len(parts) != 2 || parts[1] != "convert" {
+	if len(parts) != 2 {
+		return 0, "", false
+	}
+	if parts[1] != "convert" && parts[1] != "order" {
 		return 0, "", false
 	}
 	id, err := strconv.Atoi(parts[0])
@@ -73,22 +83,59 @@ func (s *Server) renderEnquiriesList(w http.ResponseWriter, r *http.Request) {
 	for _, customer := range customerOptions {
 		customerByID[customer.ID] = customer
 	}
+	customerAddressByID := map[int]string{}
+	for _, item := range items {
+		if item.CustomerID <= 0 {
+			continue
+		}
+		customer, err := s.customerStore.Get(item.CustomerID)
+		if err != nil {
+			continue
+		}
+		if _, exists := customerByID[item.CustomerID]; !exists {
+			customerByID[item.CustomerID] = customers.ListItem{
+				ID:            customer.ID,
+				Name:          customer.Name,
+				Mobile:        customer.Mobile,
+				CityName:      customer.CityName,
+				ApartmentName: customer.ApartmentName,
+			}
+		}
+		if customer.Address != nil {
+			address := strings.TrimSpace(*customer.Address)
+			if address != "" {
+				customerAddressByID[item.CustomerID] = address
+			}
+		}
+	}
 
 	vm := enquiriesListViewModel{
-		ActiveSection:   "enquiries",
-		SelectedStatus:  status,
-		Rows:            items,
-		Flash:           strings.TrimSpace(r.URL.Query().Get("flash")),
-		ValidationToast: strings.TrimSpace(r.URL.Query().Get("error")),
-		OpenConvertModal: strings.TrimSpace(r.URL.Query().Get("open_convert_modal")) == "1",
-		ModalEnquiryID:   parseModalEnquiryID(r.URL.Query().Get("modal_enquiry_id")),
-		ModalCustomerID:  strings.TrimSpace(r.URL.Query().Get("customer_id")),
-		ModalQuickName:   strings.TrimSpace(r.URL.Query().Get("quick_customer_name")),
-		ModalQuickMobile: strings.TrimSpace(r.URL.Query().Get("quick_customer_mobile")),
-		ModalNote:        strings.TrimSpace(r.URL.Query().Get("note")),
-		ModalSearch:      strings.TrimSpace(r.URL.Query().Get("customer_search")),
-		CustomerOptions: customerOptions,
-		customerByID:    customerByID,
+		ActiveSection:        "enquiries",
+		SelectedStatus:       status,
+		Rows:                 items,
+		Flash:                strings.TrimSpace(r.URL.Query().Get("flash")),
+		ValidationToast:      strings.TrimSpace(r.URL.Query().Get("error")),
+		OpenConvertModal:     strings.TrimSpace(r.URL.Query().Get("open_convert_modal")) == "1",
+		ModalEnquiryID:       parseModalEnquiryID(r.URL.Query().Get("modal_enquiry_id")),
+		ModalCustomerID:      strings.TrimSpace(r.URL.Query().Get("customer_id")),
+		ModalQuickName:       strings.TrimSpace(r.URL.Query().Get("quick_customer_name")),
+		ModalQuickMobile:     strings.TrimSpace(r.URL.Query().Get("quick_customer_mobile")),
+		ModalNote:            strings.TrimSpace(r.URL.Query().Get("note")),
+		ModalSearch:          strings.TrimSpace(r.URL.Query().Get("customer_search")),
+		OpenOrderModal:       parseOptionalBool(r.URL.Query().Get("open_order_modal")),
+		OrderModalEnquiryID:  parseModalEnquiryID(r.URL.Query().Get("modal_order_enquiry_id")),
+		OrderModalCustomer:   strings.TrimSpace(r.URL.Query().Get("modal_order_customer_name")),
+		OrderModalMobile:     strings.TrimSpace(r.URL.Query().Get("modal_order_customer_mobile")),
+		OrderModalHasAddress: parseOptionalBool(r.URL.Query().Get("modal_order_has_address")),
+		OrderModalAddressReq: parseOptionalBool(r.URL.Query().Get("modal_order_require_address")),
+		OrderModalAmount:     strings.TrimSpace(r.URL.Query().Get("order_amount")),
+		OrderModalOrderNote:  strings.TrimSpace(r.URL.Query().Get("note")),
+		OrderModalAddress:    strings.TrimSpace(r.URL.Query().Get("address")),
+		OrderAmountError:     strings.TrimSpace(r.URL.Query().Get("order_amount_error")),
+		OrderAddressError:    strings.TrimSpace(r.URL.Query().Get("address_error")),
+		CustomerOptions:      customerOptions,
+		customerByID:         customerByID,
+		customerAddressByID:  customerAddressByID,
 	}
 	if err := enquiriesListTemplate.Execute(w, vm); err != nil {
 		http.Error(w, "failed to render enquiries list", http.StatusInternalServerError)
@@ -131,6 +178,131 @@ func (s *Server) convertEnquiryToInterested(w http.ResponseWriter, r *http.Reque
 	http.Redirect(w, r, enquiriesRedirect(clicked.StatusClicked, "Enquiry converted to Interested.", ""), http.StatusSeeOther)
 }
 
+func (s *Server) convertEnquiryToOrdered(w http.ResponseWriter, r *http.Request, enquiryID int) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form data", http.StatusBadRequest)
+		return
+	}
+
+	current, customer, alreadyOrdered, err := s.resolveOrderConversionTarget(enquiryID)
+	if handled := s.handleOrderTargetError(w, r, current, alreadyOrdered, err); handled {
+		return
+	}
+
+	hasAddress := customerHasAddress(customer)
+	orderAmount, note, addressInput, fieldErrors := parseOrderSubmission(r, hasAddress)
+	if len(fieldErrors) > 0 {
+		toast := buildValidationToast(fieldErrors, []string{"order_amount", "address"})
+		http.Redirect(w, r, enquiriesOrderValidationRedirect(clicked.StatusInterested, enquiryID, toast, r, customer.Name, customer.Mobile, hasAddress, fieldErrors["address"] != "", fieldErrors), http.StatusSeeOther)
+		return
+	}
+
+	if err := s.persistCustomerAddressForOrdered(customer, hasAddress, addressInput); err != nil {
+		http.Error(w, "failed to update customer address", http.StatusInternalServerError)
+		return
+	}
+
+	_, alreadyOrdered, err = s.clickedStore.ConvertToOrdered(enquiryID, clicked.OrderInput{
+		OrderAmount: orderAmount,
+		Note:        note,
+		Address:     addressInput,
+		ModifiedBy:  defaultConvertedBy,
+	})
+	if handled := s.handleOrderConversionStoreError(w, r, enquiryID, customer, hasAddress, alreadyOrdered, err); handled {
+		return
+	}
+	http.Redirect(w, r, enquiriesRedirect(clicked.StatusInterested, "Enquiry converted to Ordered.", ""), http.StatusSeeOther)
+}
+
+func (s *Server) resolveOrderConversionTarget(enquiryID int) (clicked.Enquiry, customers.Customer, bool, error) {
+	current, err := s.clickedStore.Get(enquiryID)
+	if err != nil {
+		return clicked.Enquiry{}, customers.Customer{}, false, err
+	}
+	if current.Status == clicked.StatusOrdered {
+		return current, customers.Customer{}, true, nil
+	}
+	if current.Status != clicked.StatusInterested || current.CustomerID <= 0 {
+		return current, customers.Customer{}, false, clicked.ErrInvalidTransition
+	}
+
+	customer, err := s.customerStore.Get(current.CustomerID)
+	if err != nil {
+		return current, customers.Customer{}, false, err
+	}
+	return current, customer, false, nil
+}
+
+func (s *Server) handleOrderTargetError(w http.ResponseWriter, r *http.Request, enquiry clicked.Enquiry, alreadyOrdered bool, err error) bool {
+	if err == nil {
+		return false
+	}
+	if err == clicked.ErrNotFound {
+		http.NotFound(w, r)
+		return true
+	}
+	if alreadyOrdered {
+		http.Redirect(w, r, enquiriesRedirect(clicked.StatusOrdered, "", "Already ordered"), http.StatusSeeOther)
+		return true
+	}
+	if err == clicked.ErrInvalidTransition {
+		http.Redirect(w, r, enquiriesRedirect(normalizeEnquiryStatusForRedirect(enquiry.Status), "", "Only interested enquiries can be ordered."), http.StatusSeeOther)
+		return true
+	}
+	http.Error(w, "failed to load enquiry", http.StatusInternalServerError)
+	return true
+}
+
+func parseOrderSubmission(r *http.Request, hasAddress bool) (int, string, string, map[string]string) {
+	orderAmount, fieldErrors := parseOrderAmountField(r.FormValue("order_amount"))
+	note := strings.TrimSpace(r.FormValue("note"))
+	addressInput := strings.TrimSpace(r.FormValue("address"))
+	if !hasAddress && addressInput == "" {
+		fieldErrors["address"] = "Address is required to convert to Ordered."
+	}
+	return orderAmount, note, addressInput, fieldErrors
+}
+
+func (s *Server) persistCustomerAddressForOrdered(customer customers.Customer, hasAddress bool, addressInput string) error {
+	if hasAddress {
+		return nil
+	}
+	_, err := s.customerStore.Update(customer.ID, customers.UpdateInput{
+		Name:          customer.Name,
+		Address:       stringPointer(addressInput),
+		CityName:      stringPointer(customer.CityName),
+		ApartmentName: stringPointer(customer.ApartmentName),
+		Notes:         customer.Notes,
+	})
+	return err
+}
+
+func (s *Server) handleOrderConversionStoreError(w http.ResponseWriter, r *http.Request, enquiryID int, customer customers.Customer, hasAddress bool, alreadyOrdered bool, err error) bool {
+	if err == nil && !alreadyOrdered {
+		return false
+	}
+	if alreadyOrdered {
+		http.Redirect(w, r, enquiriesRedirect(clicked.StatusOrdered, "", "Already ordered"), http.StatusSeeOther)
+		return true
+	}
+	if err == clicked.ErrNotFound {
+		http.NotFound(w, r)
+		return true
+	}
+	if err == clicked.ErrInvalidTransition {
+		http.Redirect(w, r, enquiriesRedirect(clicked.StatusInterested, "", "Only interested enquiries can be ordered."), http.StatusSeeOther)
+		return true
+	}
+	if err == clicked.ErrAddressRequired {
+		fieldErrs := map[string]string{"address": "Address is required to convert to Ordered."}
+		toast := buildValidationToast(fieldErrs, []string{"address"})
+		http.Redirect(w, r, enquiriesOrderValidationRedirect(clicked.StatusInterested, enquiryID, toast, r, customer.Name, customer.Mobile, hasAddress, true, fieldErrs), http.StatusSeeOther)
+		return true
+	}
+	http.Error(w, "failed to convert enquiry", http.StatusInternalServerError)
+	return true
+}
+
 func enquiriesRedirect(status clicked.Status, flash string, errMsg string) string {
 	base := "/admin/enquiries?status=" + url.QueryEscape(string(status))
 	if flash != "" {
@@ -154,12 +326,80 @@ func enquiriesValidationRedirect(status clicked.Status, enquiryID int, errMsg st
 		"&customer_search=" + url.QueryEscape(strings.TrimSpace(r.FormValue("customer_search")))
 }
 
+func enquiriesOrderValidationRedirect(status clicked.Status, enquiryID int, validationToast string, r *http.Request, customerName string, customerMobile string, hasAddress bool, requireAddress bool, fieldErrors map[string]string) string {
+	values := url.Values{}
+	values.Set("status", string(status))
+	if validationToast != "" {
+		values.Set("error", validationToast)
+	}
+	values.Set("open_order_modal", "1")
+	values.Set("modal_order_enquiry_id", strconv.Itoa(enquiryID))
+	values.Set("modal_order_customer_name", strings.TrimSpace(customerName))
+	values.Set("modal_order_customer_mobile", strings.TrimSpace(customerMobile))
+	if hasAddress {
+		values.Set("modal_order_has_address", "1")
+	} else {
+		values.Set("modal_order_has_address", "0")
+	}
+	if requireAddress {
+		values.Set("modal_order_require_address", "1")
+	}
+	values.Set("order_amount", strings.TrimSpace(r.FormValue("order_amount")))
+	values.Set("note", strings.TrimSpace(r.FormValue("note")))
+	values.Set("address", strings.TrimSpace(r.FormValue("address")))
+	if msg := strings.TrimSpace(fieldErrors["order_amount"]); msg != "" {
+		values.Set("order_amount_error", msg)
+	}
+	if msg := strings.TrimSpace(fieldErrors["address"]); msg != "" {
+		values.Set("address_error", msg)
+	}
+	return "/admin/enquiries?" + values.Encode()
+}
+
 func parseModalEnquiryID(raw string) int {
 	value, err := strconv.Atoi(strings.TrimSpace(raw))
 	if err != nil || value <= 0 {
 		return 0
 	}
 	return value
+}
+
+func parseOptionalBool(raw string) bool {
+	value := strings.TrimSpace(raw)
+	return value == "1" || strings.EqualFold(value, "true")
+}
+
+func parseOrderAmountField(raw string) (int, map[string]string) {
+	out := map[string]string{}
+	value := strings.TrimSpace(raw)
+	amount, err := strconv.Atoi(value)
+	if err != nil || amount <= 0 {
+		out["order_amount"] = "Order amount must be a whole number greater than 0."
+		return 0, out
+	}
+	return amount, out
+}
+
+func normalizeEnquiryStatusForRedirect(status clicked.Status) clicked.Status {
+	if clicked.IsValidStatus(status) {
+		return status
+	}
+	return clicked.StatusClicked
+}
+
+func customerHasAddress(customer customers.Customer) bool {
+	if customer.Address == nil {
+		return false
+	}
+	return strings.TrimSpace(*customer.Address) != ""
+}
+
+func stringPointer(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 func resolveCustomerIDForConversion(r *http.Request, customerStore customers.Store) (int, string) {
@@ -219,20 +459,32 @@ func resolveDuplicateQuickCreate(customerStore customers.Store, createErr error)
 }
 
 type enquiriesListViewModel struct {
-	ActiveSection   string
-	SelectedStatus  clicked.Status
-	Rows            []clicked.Enquiry
-	Flash           string
-	ValidationToast string
-	OpenConvertModal bool
-	ModalEnquiryID   int
-	ModalCustomerID  string
-	ModalQuickName   string
-	ModalQuickMobile string
-	ModalNote        string
-	ModalSearch      string
-	CustomerOptions []customers.ListItem
-	customerByID    map[int]customers.ListItem
+	ActiveSection        string
+	SelectedStatus       clicked.Status
+	Rows                 []clicked.Enquiry
+	Flash                string
+	ValidationToast      string
+	OpenConvertModal     bool
+	ModalEnquiryID       int
+	ModalCustomerID      string
+	ModalQuickName       string
+	ModalQuickMobile     string
+	ModalNote            string
+	ModalSearch          string
+	OpenOrderModal       bool
+	OrderModalEnquiryID  int
+	OrderModalCustomer   string
+	OrderModalMobile     string
+	OrderModalHasAddress bool
+	OrderModalAddressReq bool
+	OrderModalAmount     string
+	OrderModalOrderNote  string
+	OrderModalAddress    string
+	OrderAmountError     string
+	OrderAddressError    string
+	CustomerOptions      []customers.ListItem
+	customerByID         map[int]customers.ListItem
+	customerAddressByID  map[int]string
 }
 
 func (v enquiriesListViewModel) TabClass(status clicked.Status) string {
@@ -246,12 +498,26 @@ func (v enquiriesListViewModel) IsClickedTab() bool {
 	return v.SelectedStatus == clicked.StatusClicked
 }
 
+func (v enquiriesListViewModel) IsInterestedTab() bool {
+	return v.SelectedStatus == clicked.StatusInterested
+}
+
+func (v enquiriesListViewModel) IsOrderedTab() bool {
+	return v.SelectedStatus == clicked.StatusOrdered
+}
+
+func (v enquiriesListViewModel) HasActionColumn() bool {
+	return v.IsClickedTab() || v.IsInterestedTab()
+}
+
 func statusLabel(status clicked.Status) string {
 	switch status {
 	case clicked.StatusClicked:
 		return "Clicked"
 	case clicked.StatusInterested:
 		return "Interested"
+	case clicked.StatusOrdered:
+		return "Ordered"
 	default:
 		return string(status)
 	}
@@ -271,6 +537,10 @@ func (v enquiriesListViewModel) CustomerMobile(id int) string {
 		return ""
 	}
 	return item.Mobile
+}
+
+func (v enquiriesListViewModel) CustomerHasAddress(id int) bool {
+	return strings.TrimSpace(v.customerAddressByID[id]) != ""
 }
 
 var enquiriesListTemplate = template.Must(template.New("enquiries-list").Funcs(template.FuncMap{
@@ -318,6 +588,9 @@ var enquiriesListTemplate = template.Must(template.New("enquiries-list").Funcs(t
     .dialog-row { display:flex; gap:8px; justify-content:flex-end; margin-top:8px; }
     .button-secondary { background:#e5e7eb; color:#1f2937; }
     .help { color:#6b7280; font-size:0.85rem; }
+    .help.error { color:#991b1b; }
+    .readonly { background:#f3f4f6; color:#4b5563; }
+    .hidden { display:none; }
   </style>
 </head>
 <body>
@@ -331,9 +604,10 @@ var enquiriesListTemplate = template.Must(template.New("enquiries-list").Funcs(t
     <div class="tabs">
       <a href="/admin/enquiries?status=clicked" class="{{.TabClass "clicked"}}">Clicked</a>
       <a href="/admin/enquiries?status=interested" class="{{.TabClass "interested"}}">Interested</a>
+      <a href="/admin/enquiries?status=ordered" class="{{.TabClass "ordered"}}">Ordered</a>
     </div>
     {{if .Flash}}<div class="toast success">{{.Flash}}</div>{{end}}
-    {{if .ValidationToast}}{{if not .OpenConvertModal}}<div class="toast error">{{.ValidationToast}}</div>{{end}}{{end}}
+    {{if .ValidationToast}}{{if and (not .OpenConvertModal) (not .OpenOrderModal)}}<div class="toast error">{{.ValidationToast}}</div>{{end}}{{end}}
     <table>
       <thead>
         <tr>
@@ -342,7 +616,7 @@ var enquiriesListTemplate = template.Must(template.New("enquiries-list").Funcs(t
           <th>Source</th>
           <th>Status</th>
           <th>Buyer</th>
-          {{if .IsClickedTab}}<th>Action</th>{{end}}
+          {{if .HasActionColumn}}<th>Action</th>{{end}}
         </tr>
       </thead>
       <tbody>
@@ -364,19 +638,36 @@ var enquiriesListTemplate = template.Must(template.New("enquiries-list").Funcs(t
               <div class="muted">{{$.CustomerMobile .CustomerID}}</div>
               {{if .Note}}<div class="muted">{{.Note}}</div>{{end}}
               <div class="muted">By {{.LastModifiedBy}}</div>
+            {{else if eq .Status "ordered"}}
+              <div><strong>{{$.CustomerName .CustomerID}}</strong></div>
+              <div class="muted">{{$.CustomerMobile .CustomerID}}</div>
+              {{if .OrderAmount}}<div class="muted">Order Amount: ₹{{.OrderAmount}}</div>{{end}}
+              {{if .Note}}<div class="muted">{{.Note}}</div>{{end}}
+              <div class="muted">By {{.LastModifiedBy}}</div>
             {{else}}
               <span class="muted">Not captured</span>
             {{end}}
           </td>
-          {{if $.IsClickedTab}}
+          {{if $.HasActionColumn}}
           <td>
+            {{if $.IsClickedTab}}
             <button type="button" class="open-convert-dialog" data-enquiry-id="{{.ID}}">Convert to Interested</button>
+            {{else if $.IsInterestedTab}}
+            <button
+              type="button"
+              class="open-order-dialog"
+              data-enquiry-id="{{.ID}}"
+              data-customer-name="{{$.CustomerName .CustomerID}}"
+              data-customer-mobile="{{$.CustomerMobile .CustomerID}}"
+              data-has-address="{{if $.CustomerHasAddress .CustomerID}}1{{else}}0{{end}}"
+            >Convert to Ordered</button>
+            {{end}}
           </td>
           {{end}}
         </tr>
         {{else}}
         <tr>
-          <td colspan="{{if .IsClickedTab}}6{{else}}5{{end}}" class="muted">No enquiries found for this status.</td>
+          <td colspan="{{if .HasActionColumn}}6{{else}}5{{end}}" class="muted">No enquiries found for this status.</td>
         </tr>
         {{end}}
       </tbody>
@@ -439,74 +730,62 @@ var enquiriesListTemplate = template.Must(template.New("enquiries-list").Funcs(t
       </div>
     </form>
   </dialog>
-  <script>
-    (function () {
-      var dialog = document.getElementById("convert-dialog");
-      var form = document.getElementById("convert-form");
-      var cancel = document.getElementById("cancel-convert");
-      var search = document.getElementById("customer-search");
-      var select = document.getElementById("customer-id");
-      var quickName = document.getElementById("quick-customer-name");
-      var quickMobile = document.getElementById("quick-customer-mobile");
-      var note = document.getElementById("enquiry-note");
-      if (!dialog || !form || !cancel || !search || !select) return;
-
-      var originalOptions = Array.prototype.slice.call(select.querySelectorAll("option"));
-
-      function filterOptions() {
-        var q = (search.value || "").toLowerCase().trim();
-        select.innerHTML = "";
-        originalOptions.forEach(function (option) {
-          if (!option.value) {
-            select.appendChild(option.cloneNode(true));
-            return;
-          }
-          var label = (option.getAttribute("data-customer-label") || "").toLowerCase();
-          if (!q || label.indexOf(q) >= 0) {
-            select.appendChild(option.cloneNode(true));
-          }
-        });
-      }
-
-      function openDialog(state) {
-        if (!state || !state.enquiryID) return;
-        form.setAttribute("action", "/admin/enquiries/" + state.enquiryID + "/convert");
-        form.reset();
-        search.value = state.search || "";
-        if (quickName) quickName.value = state.quickName || "";
-        if (quickMobile) quickMobile.value = state.quickMobile || "";
-        if (note) note.value = state.note || "";
-        filterOptions();
-        if (state.customerID) {
-          select.value = state.customerID;
-        }
-        dialog.showModal();
-      }
-
-      document.querySelectorAll(".open-convert-dialog").forEach(function (button) {
-        button.addEventListener("click", function () {
-          openDialog({ enquiryID: button.getAttribute("data-enquiry-id") });
-        });
-      });
-
-      cancel.addEventListener("click", function () {
-        dialog.close();
-      });
-
-      search.addEventListener("input", filterOptions);
-
-      if (form.getAttribute("data-open-on-load") === "1") {
-        openDialog({
-          enquiryID: form.getAttribute("data-enquiry-id"),
-          customerID: form.getAttribute("data-customer-id"),
-          quickName: form.getAttribute("data-quick-customer-name"),
-          quickMobile: form.getAttribute("data-quick-customer-mobile"),
-          note: form.getAttribute("data-note"),
-          search: form.getAttribute("data-customer-search")
-        });
-      }
-    })();
-  </script>
+  {{end}}
+  {{if .IsInterestedTab}}
+  <dialog id="order-dialog">
+    <form
+      id="order-form"
+      class="dialog-card"
+      method="post"
+      action=""
+      data-open-on-load="{{if .OpenOrderModal}}1{{else}}0{{end}}"
+      data-enquiry-id="{{.OrderModalEnquiryID}}"
+      data-customer-name="{{.OrderModalCustomer}}"
+      data-customer-mobile="{{.OrderModalMobile}}"
+      data-has-address="{{if .OrderModalHasAddress}}1{{else}}0{{end}}"
+      data-require-address="{{if .OrderModalAddressReq}}1{{else}}0{{end}}"
+      data-order-amount="{{.OrderModalAmount}}"
+      data-note="{{.OrderModalOrderNote}}"
+      data-address="{{.OrderModalAddress}}"
+    >
+      <h2 class="dialog-title">Convert to Ordered</h2>
+      {{if .OpenOrderModal}}{{if .ValidationToast}}<div class="toast error" role="alert">{{.ValidationToast}}</div>{{end}}{{end}}
+      <div class="form-grid">
+        <div class="field">
+          <label for="order-customer-name">Customer</label>
+          <input id="order-customer-name" class="readonly" readonly>
+        </div>
+        <div class="field">
+          <label for="order-customer-mobile">Mobile</label>
+          <input id="order-customer-mobile" class="readonly" readonly>
+        </div>
+        <div class="field">
+          <label for="order-amount">Order Amount (required)</label>
+          <input id="order-amount" name="order_amount" inputmode="numeric" placeholder="Enter order amount">
+          {{if .OrderAmountError}}<div class="help error">{{.OrderAmountError}}</div>{{end}}
+        </div>
+        <div class="field hidden" id="order-address-field">
+          <label for="order-address">Address</label>
+          <textarea id="order-address" name="address" placeholder="Enter customer address"></textarea>
+          {{if .OrderAddressError}}<div class="help error">{{.OrderAddressError}}</div>{{end}}
+        </div>
+        <div class="field">
+          <label for="order-note">Note (optional)</label>
+          <textarea id="order-note" name="note" placeholder="Optional note"></textarea>
+        </div>
+      </div>
+      <input type="hidden" id="order-customer-name-hidden" name="order_customer_name" value="">
+      <input type="hidden" id="order-customer-mobile-hidden" name="order_customer_mobile" value="">
+      <input type="hidden" id="order-customer-has-address-hidden" name="order_customer_has_address" value="0">
+      <div class="dialog-row">
+        <button type="button" id="cancel-order" class="button-secondary">Cancel</button>
+        <button type="submit">Convert</button>
+      </div>
+    </form>
+  </dialog>
+  {{end}}
+  {{if or .IsClickedTab .IsInterestedTab}}
+  <script src="/assets/enquiries-form.js" defer></script>
   {{end}}
 </body>
 </html>`))

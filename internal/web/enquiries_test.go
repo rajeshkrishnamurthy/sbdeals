@@ -261,6 +261,13 @@ func TestEnquiryItemMethodGuard(t *testing.T) {
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("expected 405, got %d", rr.Code)
 	}
+
+	orderRR := httptest.NewRecorder()
+	orderReq := httptest.NewRequest(http.MethodGet, "/admin/enquiries/1/order", nil)
+	server.Handler().ServeHTTP(orderRR, orderReq)
+	if orderRR.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405 for order route, got %d", orderRR.Code)
+	}
 }
 
 func TestEnquiriesInterestedTabRendersCustomerDetails(t *testing.T) {
@@ -289,6 +296,159 @@ func TestEnquiriesInterestedTabRendersCustomerDetails(t *testing.T) {
 	body := rr.Body.String()
 	if !strings.Contains(body, "Bundle Eight") || !strings.Contains(body, customer.Name) || !strings.Contains(body, customer.Mobile) {
 		t.Fatalf("expected interested row customer details in body, got: %s", body)
+	}
+}
+
+func TestConvertEnquiryToOrderedSuccess(t *testing.T) {
+	clickedStore := clicked.NewMemoryStore()
+	created, _ := clickedStore.CreateClicked(clicked.CreateInput{
+		ItemID:     12,
+		ItemType:   clicked.ItemTypeBundle,
+		ItemTitle:  "Bundle Twelve",
+		SourcePage: "catalog",
+	})
+	server, customerStore := newEnquiriesTestServer(clickedStore)
+	address := "Block B, Indiranagar"
+	customer, _ := customerStore.Create(customers.CreateInput{Name: "Asha", Mobile: "9999999999", Address: &address})
+	_, _, _ = clickedStore.ConvertToInterested(created.ID, clicked.ConvertInput{
+		CustomerID: customer.ID,
+		ModifiedBy: "system-admin",
+	})
+
+	form := url.Values{}
+	form.Set("order_amount", "499")
+	form.Set("note", "Confirmed")
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/admin/enquiries/"+strconv.Itoa(created.ID)+"/order", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", rr.Code)
+	}
+	location := rr.Header().Get("Location")
+	if !strings.Contains(location, "flash=Enquiry+converted+to+Ordered.") {
+		t.Fatalf("expected ordered success redirect, got %q", location)
+	}
+
+	interestedRows, _ := clickedStore.ListByStatus(clicked.StatusInterested)
+	if len(interestedRows) != 0 {
+		t.Fatalf("expected interested queue empty, got %+v", interestedRows)
+	}
+	orderedRows, _ := clickedStore.ListByStatus(clicked.StatusOrdered)
+	if len(orderedRows) != 1 {
+		t.Fatalf("expected one ordered row, got %+v", orderedRows)
+	}
+	if orderedRows[0].OrderAmount == nil || *orderedRows[0].OrderAmount != 499 {
+		t.Fatalf("expected order amount 499, got %+v", orderedRows[0].OrderAmount)
+	}
+}
+
+func TestConvertEnquiryToOrderedRequiresAddressIfMissing(t *testing.T) {
+	clickedStore := clicked.NewMemoryStore()
+	created, _ := clickedStore.CreateClicked(clicked.CreateInput{
+		ItemID:     13,
+		ItemType:   clicked.ItemTypeBook,
+		ItemTitle:  "Book Thirteen",
+		SourcePage: "catalog",
+	})
+	server, customerStore := newEnquiriesTestServer(clickedStore)
+	customer, _ := customerStore.Create(customers.CreateInput{Name: "Rohan", Mobile: "8888888888"})
+	_, _, _ = clickedStore.ConvertToInterested(created.ID, clicked.ConvertInput{
+		CustomerID: customer.ID,
+		ModifiedBy: "system-admin",
+	})
+
+	form := url.Values{}
+	form.Set("order_amount", "350")
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/admin/enquiries/"+strconv.Itoa(created.ID)+"/order", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", rr.Code)
+	}
+	location := rr.Header().Get("Location")
+	if !strings.Contains(location, "Address+is+required+to+convert+to+Ordered.") {
+		t.Fatalf("expected address validation message, got %q", location)
+	}
+	if !strings.Contains(location, "open_order_modal=1") {
+		t.Fatalf("expected order modal reopen marker, got %q", location)
+	}
+}
+
+func TestConvertEnquiryToOrderedRejectsClickedStatus(t *testing.T) {
+	clickedStore := clicked.NewMemoryStore()
+	created, _ := clickedStore.CreateClicked(clicked.CreateInput{
+		ItemID:     14,
+		ItemType:   clicked.ItemTypeBundle,
+		ItemTitle:  "Bundle Fourteen",
+		SourcePage: "catalog",
+	})
+	server, _ := newEnquiriesTestServer(clickedStore)
+
+	form := url.Values{}
+	form.Set("order_amount", "250")
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/admin/enquiries/"+strconv.Itoa(created.ID)+"/order", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Header().Get("Location"), "Only+interested+enquiries+can+be+ordered.") {
+		t.Fatalf("expected invalid transition message, got %q", rr.Header().Get("Location"))
+	}
+}
+
+func TestEnquiriesInterestedTabShowsConvertToOrderedAction(t *testing.T) {
+	clickedStore := clicked.NewMemoryStore()
+	created, _ := clickedStore.CreateClicked(clicked.CreateInput{
+		ItemID:     15,
+		ItemType:   clicked.ItemTypeBook,
+		ItemTitle:  "Book Fifteen",
+		SourcePage: "catalog",
+	})
+	server, customerStore := newEnquiriesTestServer(clickedStore)
+	address := "HSR Layout"
+	customer, _ := customerStore.Create(customers.CreateInput{Name: "Vikram", Mobile: "7777777777", Address: &address})
+	_, _, _ = clickedStore.ConvertToInterested(created.ID, clicked.ConvertInput{
+		CustomerID: customer.ID,
+		ModifiedBy: "system-admin",
+	})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/admin/enquiries?status=interested", nil)
+	server.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Convert to Ordered") {
+		t.Fatalf("expected convert-to-ordered action, got body: %s", body)
+	}
+	if strings.Contains(body, "Convert to Interested") {
+		t.Fatalf("did not expect clicked conversion action on interested tab")
+	}
+	if !strings.Contains(body, `/assets/enquiries-form.js`) {
+		t.Fatalf("expected enquiries form asset on interested tab")
+	}
+}
+
+func TestEnquiriesFormAssetServesModalWiring(t *testing.T) {
+	server, _ := newEnquiriesTestServer(clicked.NewMemoryStore())
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/assets/enquiries-form.js", nil)
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "initOrderModal") {
+		t.Fatalf("expected enquiries form asset content")
 	}
 }
 

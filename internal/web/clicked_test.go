@@ -82,11 +82,19 @@ func (s *clickedStoreStub) CreateClicked(input clicked.CreateInput) (clicked.Enq
 	return clicked.Enquiry{}, nil
 }
 
+func (s *clickedStoreStub) Get(id int) (clicked.Enquiry, error) {
+	return clicked.Enquiry{}, nil
+}
+
 func (s *clickedStoreStub) ListByStatus(status clicked.Status) ([]clicked.Enquiry, error) {
 	return nil, nil
 }
 
 func (s *clickedStoreStub) ConvertToInterested(id int, input clicked.ConvertInput) (clicked.Enquiry, bool, error) {
+	return clicked.Enquiry{}, false, nil
+}
+
+func (s *clickedStoreStub) ConvertToOrdered(id int, input clicked.OrderInput) (clicked.Enquiry, bool, error) {
 	return clicked.Enquiry{}, false, nil
 }
 

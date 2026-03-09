@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 )
 
 type PostgresStore struct {
@@ -14,14 +15,16 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 	return &PostgresStore{db: db}
 }
 
+const enquiryScanColumns = "id, item_id, item_type, item_title, source_page, source_rail_id, source_rail_title, status, customer_id, buyer_note, order_amount, last_modified_by, l_m_at, created_at"
+
 func (s *PostgresStore) CreateClicked(input CreateInput) (Enquiry, error) {
-	query := `INSERT INTO enquiries (item_id, item_type, item_title, source_page, source_rail_id, source_rail_title, status) VALUES ($1, $2, $3, $4, $5, $6, 'clicked') RETURNING id, item_id, item_type, item_title, source_page, source_rail_id, source_rail_title, status, buyer_name, buyer_phone, buyer_note, converted_by, converted_at, created_at`
+	query := `INSERT INTO enquiries (item_id, item_type, item_title, source_page, source_rail_id, source_rail_title, status, customer_id) VALUES ($1, $2, $3, $4, $5, $6, 'clicked', 1) RETURNING ` + enquiryScanColumns
 	row := s.db.QueryRowContext(context.Background(), query, input.ItemID, string(input.ItemType), input.ItemTitle, input.SourcePage, input.SourceRailID, input.SourceRail)
 	return scanEnquiry(row)
 }
 
 func (s *PostgresStore) ListByStatus(status Status) ([]Enquiry, error) {
-	query := `SELECT id, item_id, item_type, item_title, source_page, source_rail_id, source_rail_title, status, buyer_name, buyer_phone, buyer_note, converted_by, converted_at, created_at FROM enquiries WHERE status = $1 ORDER BY created_at DESC, id DESC`
+	query := `SELECT ` + enquiryScanColumns + ` FROM enquiries WHERE status = $1 ORDER BY created_at DESC, id DESC`
 	rows, err := s.db.QueryContext(context.Background(), query, string(status))
 	if err != nil {
 		return nil, err
@@ -52,8 +55,8 @@ func (s *PostgresStore) ConvertToInterested(id int, input ConvertInput) (Enquiry
 		_ = tx.Rollback()
 	}()
 
-	query := `UPDATE enquiries SET status = 'interested', buyer_name = $1, buyer_phone = $2, buyer_note = $3, converted_by = $4, converted_at = NOW() WHERE id = $5 AND status = 'clicked' RETURNING id, item_id, item_type, item_title, source_page, source_rail_id, source_rail_title, status, buyer_name, buyer_phone, buyer_note, converted_by, converted_at, created_at`
-	row := tx.QueryRowContext(ctx, query, input.BuyerName, input.BuyerPhone, input.BuyerNote, input.ConvertedBy, id)
+	query := `UPDATE enquiries SET status = 'interested', customer_id = $1, buyer_note = $2, last_modified_by = $3, l_m_at = NOW() WHERE id = $4 AND status = 'clicked' RETURNING ` + enquiryScanColumns
+	row := tx.QueryRowContext(ctx, query, input.CustomerID, input.Note, input.ModifiedBy, id)
 	updated, err := scanEnquiry(row)
 	if err == nil {
 		if err := applyInterestedTransitionSideEffects(ctx, tx, updated); err != nil {
@@ -81,14 +84,88 @@ func (s *PostgresStore) ConvertToInterested(id int, input ConvertInput) (Enquiry
 	return Enquiry{}, false, ErrNotFound
 }
 
-func (s *PostgresStore) getByID(id int) (Enquiry, error) {
+func (s *PostgresStore) ConvertToOrdered(id int, input OrderInput) (Enquiry, bool, error) {
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Enquiry{}, false, err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	current, err := getByIDForUpdate(ctx, tx, id)
+	if err != nil {
+		return Enquiry{}, false, err
+	}
+	if current.Status == StatusOrdered {
+		if err := tx.Commit(); err != nil {
+			return Enquiry{}, false, err
+		}
+		return current, true, nil
+	}
+	if current.Status != StatusInterested || current.CustomerID <= 0 {
+		return Enquiry{}, false, ErrInvalidTransition
+	}
+	if err := ensureCustomerAddress(ctx, tx, current.CustomerID, input.Address); err != nil {
+		return Enquiry{}, false, err
+	}
+
+	query := `UPDATE enquiries SET status = 'ordered', order_amount = $1, buyer_note = $2, last_modified_by = $3, l_m_at = NOW() WHERE id = $4 AND status = 'interested' RETURNING ` + enquiryScanColumns
+	row := tx.QueryRowContext(ctx, query, input.OrderAmount, nullableTrimmed(input.Note), input.ModifiedBy, id)
+	updated, err := scanEnquiry(row)
+	if err != nil {
+		return Enquiry{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Enquiry{}, false, err
+	}
+	return updated, false, nil
+}
+
+func (s *PostgresStore) Get(id int) (Enquiry, error) {
 	return getByID(context.Background(), s.db, id)
 }
 
 func getByID(ctx context.Context, db queryRowContextExecutor, id int) (Enquiry, error) {
-	query := `SELECT id, item_id, item_type, item_title, source_page, source_rail_id, source_rail_title, status, buyer_name, buyer_phone, buyer_note, converted_by, converted_at, created_at FROM enquiries WHERE id = $1`
+	query := `SELECT ` + enquiryScanColumns + ` FROM enquiries WHERE id = $1`
 	row := db.QueryRowContext(ctx, query, id)
 	return scanEnquiry(row)
+}
+
+func getByIDForUpdate(ctx context.Context, tx *sql.Tx, id int) (Enquiry, error) {
+	query := `SELECT ` + enquiryScanColumns + ` FROM enquiries WHERE id = $1 FOR UPDATE`
+	row := tx.QueryRowContext(ctx, query, id)
+	return scanEnquiry(row)
+}
+
+func ensureCustomerAddress(ctx context.Context, tx *sql.Tx, customerID int, providedAddress string) error {
+	var currentAddress sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT address FROM customers WHERE id = $1 FOR UPDATE`, customerID).Scan(&currentAddress); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrInvalidTransition
+		}
+		return err
+	}
+
+	if currentAddress.Valid && strings.TrimSpace(currentAddress.String) != "" {
+		return nil
+	}
+
+	address := strings.TrimSpace(providedAddress)
+	if address == "" {
+		return ErrAddressRequired
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE customers SET address = $1, updated_at = NOW() WHERE id = $2`, address, customerID)
+	return err
+}
+
+func nullableTrimmed(raw string) any {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+	return trimmed
 }
 
 func applyInterestedTransitionSideEffects(ctx context.Context, tx *sql.Tx, enquiry Enquiry) error {
@@ -155,8 +232,11 @@ func scanEnquiry(scanner interface{ Scan(dest ...any) error }) (Enquiry, error) 
 	var item Enquiry
 	var itemType string
 	var status string
-	var convertedBy sql.NullString
-	var convertedAt sql.NullTime
+	var customerID sql.NullInt64
+	var note sql.NullString
+	var orderAmount sql.NullInt64
+	var modifiedBy sql.NullString
+	var modifiedAt sql.NullTime
 	if err := scanner.Scan(
 		&item.ID,
 		&item.ItemID,
@@ -166,11 +246,11 @@ func scanEnquiry(scanner interface{ Scan(dest ...any) error }) (Enquiry, error) 
 		&item.SourceRailID,
 		&item.SourceRail,
 		&status,
-		&item.BuyerName,
-		&item.BuyerPhone,
-		&item.BuyerNote,
-		&convertedBy,
-		&convertedAt,
+		&customerID,
+		&note,
+		&orderAmount,
+		&modifiedBy,
+		&modifiedAt,
 		&item.CreatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -180,11 +260,21 @@ func scanEnquiry(scanner interface{ Scan(dest ...any) error }) (Enquiry, error) 
 	}
 	item.ItemType = ItemType(itemType)
 	item.Status = Status(status)
-	if convertedBy.Valid {
-		item.ConvertedBy = convertedBy.String
+	if customerID.Valid {
+		item.CustomerID = int(customerID.Int64)
 	}
-	if convertedAt.Valid {
-		item.ConvertedAt = &convertedAt.Time
+	if note.Valid {
+		item.Note = note.String
+	}
+	if orderAmount.Valid {
+		value := int(orderAmount.Int64)
+		item.OrderAmount = &value
+	}
+	if modifiedBy.Valid {
+		item.LastModifiedBy = modifiedBy.String
+	}
+	if modifiedAt.Valid {
+		item.LastModifiedAt = &modifiedAt.Time
 	}
 	return item, nil
 }
