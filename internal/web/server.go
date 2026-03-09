@@ -12,6 +12,7 @@ import (
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/books"
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/bundles"
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/clicked"
+	"github.com/rajeshkrishnamurthy/sbdeals/internal/customers"
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/rails"
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/suppliers"
 )
@@ -26,13 +27,14 @@ var defaultLocations = []string{
 
 // Server provides HTTP handlers for the Sprint 1 Supplier admin feature.
 type Server struct {
-	store        suppliers.Store
-	bookStore    books.Store
-	bundleStore  bundles.Store
-	railStore    rails.Store
-	clickedStore clicked.Store
-	locations    []string
-	mux          *http.ServeMux
+	store         suppliers.Store
+	bookStore     books.Store
+	bundleStore   bundles.Store
+	railStore     rails.Store
+	clickedStore  clicked.Store
+	customerStore customers.Store
+	locations     []string
+	mux           *http.ServeMux
 }
 
 func NewServer(store suppliers.Store, bookStores ...books.Store) *Server {
@@ -43,7 +45,8 @@ func NewServer(store suppliers.Store, bookStores ...books.Store) *Server {
 	bundleStore := bundles.Store(bundles.NewMemoryStore(nil, nil))
 	railStore := rails.Store(rails.NewMemoryStore())
 	clickedStore := clicked.Store(clicked.NewMemoryStore())
-	return NewServerWithStoresAndClicked(store, bookStore, bundleStore, railStore, clickedStore)
+	customerStore := customers.Store(customers.NewMemoryStore())
+	return NewServerWithAllStores(store, bookStore, bundleStore, railStore, clickedStore, customerStore)
 }
 
 func NewServerWithStores(store suppliers.Store, bookStore books.Store, bundleStore bundles.Store, railStores ...rails.Store) *Server {
@@ -52,18 +55,25 @@ func NewServerWithStores(store suppliers.Store, bookStore books.Store, bundleSto
 		railStore = railStores[0]
 	}
 	clickedStore := clicked.Store(clicked.NewMemoryStore())
-	return NewServerWithStoresAndClicked(store, bookStore, bundleStore, railStore, clickedStore)
+	customerStore := customers.Store(customers.NewMemoryStore())
+	return NewServerWithAllStores(store, bookStore, bundleStore, railStore, clickedStore, customerStore)
 }
 
 func NewServerWithStoresAndClicked(store suppliers.Store, bookStore books.Store, bundleStore bundles.Store, railStore rails.Store, clickedStore clicked.Store) *Server {
+	customerStore := customers.Store(customers.NewMemoryStore())
+	return NewServerWithAllStores(store, bookStore, bundleStore, railStore, clickedStore, customerStore)
+}
+
+func NewServerWithAllStores(store suppliers.Store, bookStore books.Store, bundleStore bundles.Store, railStore rails.Store, clickedStore clicked.Store, customerStore customers.Store) *Server {
 	s := &Server{
-		store:        store,
-		bookStore:    bookStore,
-		bundleStore:  bundleStore,
-		railStore:    railStore,
-		clickedStore: clickedStore,
-		locations:    append([]string(nil), defaultLocations...),
-		mux:          http.NewServeMux(),
+		store:         store,
+		bookStore:     bookStore,
+		bundleStore:   bundleStore,
+		railStore:     railStore,
+		clickedStore:  clickedStore,
+		customerStore: customerStore,
+		locations:     append([]string(nil), defaultLocations...),
+		mux:           http.NewServeMux(),
 	}
 
 	s.mux.HandleFunc("/", s.handleRoot)
@@ -83,10 +93,14 @@ func NewServerWithStoresAndClicked(store suppliers.Store, bookStore books.Store,
 	s.mux.HandleFunc("/admin/rails/", s.handleRailItem)
 	s.mux.HandleFunc("/admin/enquiries", s.handleEnquiriesCollection)
 	s.mux.HandleFunc("/admin/enquiries/", s.handleEnquiryItem)
+	s.mux.HandleFunc("/admin/customers", s.handleCustomersCollection)
+	s.mux.HandleFunc("/admin/customers/new", s.handleCustomerNew)
+	s.mux.HandleFunc("/admin/customers/", s.handleCustomerItem)
 	s.mux.HandleFunc("/assets/books-form.js", s.handleBooksFormJSAsset)
 	s.mux.HandleFunc("/assets/bundles-form.js", s.handleBundlesFormJSAsset)
 	s.mux.HandleFunc("/assets/rails-form.js", s.handleRailsFormJSAsset)
 	s.mux.HandleFunc("/assets/catalog.js", s.handleCatalogJSAsset)
+	s.mux.HandleFunc("/assets/customers-form.js", s.handleCustomersFormJSAsset)
 
 	return s
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/bundles"
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/clicked"
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/config"
+	"github.com/rajeshkrishnamurthy/sbdeals/internal/customers"
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/db"
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/rails"
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/suppliers"
@@ -46,7 +47,8 @@ func main() {
 	bundleStore := bundles.NewPostgresStore(sqlDB)
 	railStore := rails.NewPostgresStore(sqlDB)
 	clickedStore := clicked.NewPostgresStore(sqlDB)
-	server := web.NewServerWithStoresAndClicked(supplierStore, bookStore, bundleStore, railStore, clickedStore)
+	customerStore := customers.NewPostgresStore(sqlDB)
+	server := web.NewServerWithAllStores(supplierStore, bookStore, bundleStore, railStore, clickedStore, customerStore)
 
 	addr := ":8080"
 	log.Printf("SBD server listening on http://localhost%s", addr)
