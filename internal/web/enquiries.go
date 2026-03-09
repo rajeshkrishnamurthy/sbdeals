@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/clicked"
+	"github.com/rajeshkrishnamurthy/sbdeals/internal/customers"
 )
 
 const defaultConvertedBy = "system-admin"
@@ -62,6 +64,15 @@ func (s *Server) renderEnquiriesList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to load enquiries", http.StatusInternalServerError)
 		return
 	}
+	customerOptions, err := s.customerStore.List(customers.ListFilter{})
+	if err != nil {
+		http.Error(w, "failed to load customers", http.StatusInternalServerError)
+		return
+	}
+	customerByID := make(map[int]customers.ListItem, len(customerOptions))
+	for _, customer := range customerOptions {
+		customerByID[customer.ID] = customer
+	}
 
 	vm := enquiriesListViewModel{
 		ActiveSection:   "enquiries",
@@ -69,6 +80,8 @@ func (s *Server) renderEnquiriesList(w http.ResponseWriter, r *http.Request) {
 		Rows:            items,
 		Flash:           strings.TrimSpace(r.URL.Query().Get("flash")),
 		ValidationToast: strings.TrimSpace(r.URL.Query().Get("error")),
+		CustomerOptions: customerOptions,
+		customerByID:    customerByID,
 	}
 	if err := enquiriesListTemplate.Execute(w, vm); err != nil {
 		http.Error(w, "failed to render enquiries list", http.StatusInternalServerError)
@@ -81,26 +94,20 @@ func (s *Server) convertEnquiryToInterested(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	buyerName := strings.TrimSpace(r.FormValue("buyer_name"))
-	localPhone := strings.TrimSpace(r.FormValue("buyer_phone"))
-	buyerNote := strings.TrimSpace(r.FormValue("buyer_note"))
-
-	if buyerName == "" {
-		http.Redirect(w, r, enquiriesRedirect(clicked.StatusClicked, "", "Buyer name is required."), http.StatusSeeOther)
+	customerID, customerErr := resolveCustomerIDForConversion(r, s.customerStore)
+	if customerErr != "" {
+		http.Redirect(w, r, enquiriesRedirect(clicked.StatusClicked, "", customerErr), http.StatusSeeOther)
 		return
 	}
-
-	phone, ok := clicked.NormalizeIndiaPhone(localPhone)
-	if !ok {
-		http.Redirect(w, r, enquiriesRedirect(clicked.StatusClicked, "", "Please enter a valid 10-digit India mobile number."), http.StatusSeeOther)
+	note := strings.TrimSpace(r.FormValue("note"))
+	if len(note) > 500 {
+		http.Redirect(w, r, enquiriesRedirect(clicked.StatusClicked, "", "Note must be 500 characters or fewer."), http.StatusSeeOther)
 		return
 	}
-
 	_, alreadyConverted, err := s.clickedStore.ConvertToInterested(enquiryID, clicked.ConvertInput{
-		BuyerName:   buyerName,
-		BuyerPhone:  phone,
-		BuyerNote:   buyerNote,
-		ConvertedBy: defaultConvertedBy,
+		CustomerID: customerID,
+		Note:       note,
+		ModifiedBy: defaultConvertedBy,
 	})
 	if err != nil {
 		if err == clicked.ErrNotFound {
@@ -128,12 +135,67 @@ func enquiriesRedirect(status clicked.Status, flash string, errMsg string) strin
 	return base
 }
 
+func resolveCustomerIDForConversion(r *http.Request, customerStore customers.Store) (int, string) {
+	if customerID, ok := parseSelectedCustomerID(r.FormValue("customer_id")); ok {
+		if _, err := customerStore.Get(customerID); err == nil {
+			return customerID, ""
+		}
+		return 0, "Please choose a valid customer."
+	}
+	quickName := strings.TrimSpace(r.FormValue("quick_customer_name"))
+	quickMobile := strings.TrimSpace(r.FormValue("quick_customer_mobile"))
+	return resolveQuickCreateCustomerID(customerStore, quickName, quickMobile)
+}
+
+func parseSelectedCustomerID(raw string) (int, bool) {
+	customerID, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || customerID <= 0 {
+		return 0, false
+	}
+	return customerID, true
+}
+
+func resolveQuickCreateCustomerID(customerStore customers.Store, quickName string, quickMobile string) (int, string) {
+	if quickName == "" && quickMobile == "" {
+		return 0, "Customer selection is required."
+	}
+	if quickName == "" || quickMobile == "" {
+		return 0, "Quick-create requires both customer name and mobile."
+	}
+	if len(quickName) < 2 || len(quickName) > 100 {
+		return 0, "Quick-create customer name must be between 2 and 100 characters."
+	}
+	normalizedMobile := customers.NormalizeMobile(quickMobile)
+	if len(normalizedMobile) != 10 {
+		return 0, "Quick-create customer mobile must be exactly 10 digits."
+	}
+
+	created, err := customerStore.Create(customers.CreateInput{Name: quickName, Mobile: quickMobile})
+	if err == nil {
+		return created.ID, ""
+	}
+	return resolveDuplicateQuickCreate(customerStore, err)
+}
+
+func resolveDuplicateQuickCreate(customerStore customers.Store, createErr error) (int, string) {
+	var dupErr *customers.DuplicateMobileError
+	if !errors.As(createErr, &dupErr) || dupErr.CustomerID <= 0 {
+		return 0, "Failed to quick-create customer."
+	}
+	if _, err := customerStore.Get(dupErr.CustomerID); err != nil {
+		return 0, "Failed to quick-create customer."
+	}
+	return dupErr.CustomerID, ""
+}
+
 type enquiriesListViewModel struct {
 	ActiveSection   string
 	SelectedStatus  clicked.Status
 	Rows            []clicked.Enquiry
 	Flash           string
 	ValidationToast string
+	CustomerOptions []customers.ListItem
+	customerByID    map[int]customers.ListItem
 }
 
 func (v enquiriesListViewModel) TabClass(status clicked.Status) string {
@@ -147,11 +209,6 @@ func (v enquiriesListViewModel) IsClickedTab() bool {
 	return v.SelectedStatus == clicked.StatusClicked
 }
 
-func localPhoneDisplay(value string) string {
-	trimmed := strings.TrimSpace(value)
-	return strings.TrimPrefix(trimmed, "+91")
-}
-
 func statusLabel(status clicked.Status) string {
 	switch status {
 	case clicked.StatusClicked:
@@ -163,10 +220,25 @@ func statusLabel(status clicked.Status) string {
 	}
 }
 
+func (v enquiriesListViewModel) CustomerName(id int) string {
+	item, ok := v.customerByID[id]
+	if !ok {
+		return ""
+	}
+	return item.Name
+}
+
+func (v enquiriesListViewModel) CustomerMobile(id int) string {
+	item, ok := v.customerByID[id]
+	if !ok {
+		return ""
+	}
+	return item.Mobile
+}
+
 var enquiriesListTemplate = template.Must(template.New("enquiries-list").Funcs(template.FuncMap{
-	"adminNav":          adminNav,
-	"statusLabel":       statusLabel,
-	"localPhoneDisplay": localPhoneDisplay,
+	"adminNav":    adminNav,
+	"statusLabel": statusLabel,
 }).Parse(`<!doctype html>
 <html lang="en">
 <head>
@@ -194,13 +266,21 @@ var enquiriesListTemplate = template.Must(template.New("enquiries-list").Funcs(t
     th, td { text-align:left; padding:10px; border-bottom:1px solid #f0f1f5; vertical-align:top; }
     th { background:#f9fafb; font-size:0.9rem; color:#4b5563; }
     .muted { color:#6b7280; font-size:0.9rem; }
-    .inline-form { display:grid; gap:8px; }
-    .inline-form-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-    input, textarea { border:1px solid #d1d5db; border-radius:8px; padding:8px; font:inherit; }
-    input { width:170px; }
-    textarea { width:min(360px, 100%); min-height:44px; }
-    .phone-prefix { background:#eef2ff; border:1px solid #d1d5db; border-radius:8px; padding:8px; font-weight:600; }
     button { border:none; border-radius:8px; background:#0f766e; color:#fff; padding:9px 12px; font-weight:700; cursor:pointer; }
+    dialog { border:1px solid #d1d5db; border-radius:12px; width:min(720px, 96vw); padding:0; }
+    .dialog-card { padding:16px; }
+    .dialog-title { margin:0 0 10px; font-size:1.15rem; }
+    .form-grid { display:grid; gap:10px; }
+    .field { display:grid; gap:6px; }
+    .field label { font-weight:600; }
+    .field input, .field select, .field textarea { width:100%; border:1px solid #d1d5db; border-radius:8px; padding:8px; font:inherit; }
+    .field textarea { min-height:70px; resize:vertical; }
+    .section { border:1px solid #e5e7eb; border-radius:10px; padding:10px; background:#f9fafb; display:grid; gap:10px; }
+    .section-title { margin:0; font-size:0.95rem; font-weight:700; color:#374151; text-transform:uppercase; letter-spacing:0.02em; }
+    .section-divider { height:1px; background:#e5e7eb; margin:2px 0; }
+    .dialog-row { display:flex; gap:8px; justify-content:flex-end; margin-top:8px; }
+    .button-secondary { background:#e5e7eb; color:#1f2937; }
+    .help { color:#6b7280; font-size:0.85rem; }
   </style>
 </head>
 <body>
@@ -243,29 +323,17 @@ var enquiriesListTemplate = template.Must(template.New("enquiries-list").Funcs(t
           <td>{{statusLabel .Status}}</td>
           <td>
             {{if eq .Status "interested"}}
-              <div><strong>{{.BuyerName}}</strong></div>
-              <div class="muted">{{.BuyerPhone}}</div>
-              {{if .BuyerNote}}<div class="muted">{{.BuyerNote}}</div>{{end}}
-              <div class="muted">By {{.ConvertedBy}}</div>
+              <div><strong>{{$.CustomerName .CustomerID}}</strong></div>
+              <div class="muted">{{$.CustomerMobile .CustomerID}}</div>
+              {{if .Note}}<div class="muted">{{.Note}}</div>{{end}}
+              <div class="muted">By {{.LastModifiedBy}}</div>
             {{else}}
               <span class="muted">Not captured</span>
             {{end}}
           </td>
           {{if $.IsClickedTab}}
           <td>
-            <form method="post" action="{{printf "/admin/enquiries/%d/convert" .ID}}" class="inline-form">
-              <div class="inline-form-row">
-                <input name="buyer_name" placeholder="Buyer name" required>
-                <span class="phone-prefix">+91</span>
-                <input name="buyer_phone" placeholder="10-digit mobile" required>
-              </div>
-              <div class="inline-form-row">
-                <textarea name="buyer_note" placeholder="Note (optional)"></textarea>
-              </div>
-              <div class="inline-form-row">
-                <button type="submit">Convert to Interested</button>
-              </div>
-            </form>
+            <button type="button" class="open-convert-dialog" data-enquiry-id="{{.ID}}">Convert to Interested</button>
           </td>
           {{end}}
         </tr>
@@ -277,5 +345,93 @@ var enquiriesListTemplate = template.Must(template.New("enquiries-list").Funcs(t
       </tbody>
     </table>
   </main>
+  {{if .IsClickedTab}}
+  <dialog id="convert-dialog">
+    <form id="convert-form" class="dialog-card" method="post" action="">
+      <h2 class="dialog-title">Convert to Interested</h2>
+      <div class="form-grid">
+        <div class="section">
+          <p class="section-title">Search existing customer</p>
+          <div class="field">
+            <label for="customer-search">Search customer</label>
+            <input id="customer-search" placeholder="Search by name or mobile">
+          </div>
+          <div class="field">
+            <label for="customer-id">Customer (required)</label>
+            <select id="customer-id" name="customer_id">
+              <option value="">Select existing customer</option>
+              {{range .CustomerOptions}}
+              <option value="{{.ID}}" data-customer-label="{{.Name}} {{.Mobile}}">{{.Name}} — {{.Mobile}}</option>
+              {{end}}
+            </select>
+          </div>
+        </div>
+        <div class="section-divider"></div>
+        <div class="section">
+          <p class="section-title">Quick-create customer (if no match)</p>
+          <div class="field">
+            <label for="quick-customer-name">Quick-create customer: Name</label>
+            <input id="quick-customer-name" name="quick_customer_name" placeholder="Required only when creating new">
+          </div>
+          <div class="field">
+            <label for="quick-customer-mobile">Quick-create customer: Mobile</label>
+            <input id="quick-customer-mobile" name="quick_customer_mobile" placeholder="10-digit mobile">
+          </div>
+        </div>
+        <div class="field">
+          <label for="enquiry-note">Note (optional)</label>
+          <textarea id="enquiry-note" name="note" placeholder="Optional note"></textarea>
+        </div>
+      </div>
+      <div class="dialog-row">
+        <button type="button" id="cancel-convert" class="button-secondary">Cancel</button>
+        <button type="submit">Convert</button>
+      </div>
+    </form>
+  </dialog>
+  <script>
+    (function () {
+      var dialog = document.getElementById("convert-dialog");
+      var form = document.getElementById("convert-form");
+      var cancel = document.getElementById("cancel-convert");
+      var search = document.getElementById("customer-search");
+      var select = document.getElementById("customer-id");
+      if (!dialog || !form || !cancel || !search || !select) return;
+
+      var originalOptions = Array.prototype.slice.call(select.querySelectorAll("option"));
+
+      function filterOptions() {
+        var q = (search.value || "").toLowerCase().trim();
+        select.innerHTML = "";
+        originalOptions.forEach(function (option) {
+          if (!option.value) {
+            select.appendChild(option.cloneNode(true));
+            return;
+          }
+          var label = (option.getAttribute("data-customer-label") || "").toLowerCase();
+          if (!q || label.indexOf(q) >= 0) {
+            select.appendChild(option.cloneNode(true));
+          }
+        });
+      }
+
+      document.querySelectorAll(".open-convert-dialog").forEach(function (button) {
+        button.addEventListener("click", function () {
+          var id = button.getAttribute("data-enquiry-id");
+          form.setAttribute("action", "/admin/enquiries/" + id + "/convert");
+          form.reset();
+          filterOptions();
+          dialog.showModal();
+        });
+      });
+
+      cancel.addEventListener("click", function () {
+        dialog.close();
+      });
+
+      search.addEventListener("input", filterOptions);
+    })();
+  </script>
+  {{end}}
 </body>
 </html>`))
