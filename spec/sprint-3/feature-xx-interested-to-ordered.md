@@ -140,5 +140,6 @@ UI should hide/disable Convert action for non-`interested` rows to reduce accide
 
 ## 11) Dependencies / Notes for Implementation Plan
 - Depends on Feature XX-A (Customer Master) being available.
-- If current Feature-02 still allows Interested without customer, update it to enforce customer linkage at `clicked -> interested` (as retrofit-aligned behavior).
+- Feature-02 retrofit is defined in: `spec/sprint-3/patch-feature-02-customer-linkage.md`.
+- Apply that patch so `clicked -> interested` enforces customer linkage via `customer_id`.
 - Keep schema and API contracts customer-reference-centric (`customer_id` as source of truth).
