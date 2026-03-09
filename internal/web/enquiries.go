@@ -126,6 +126,8 @@ func (s *Server) renderEnquiriesList(w http.ResponseWriter, r *http.Request) {
 		OrderModalEnquiryID:  parseModalEnquiryID(r.URL.Query().Get("modal_order_enquiry_id")),
 		OrderModalCustomer:   strings.TrimSpace(r.URL.Query().Get("modal_order_customer_name")),
 		OrderModalMobile:     strings.TrimSpace(r.URL.Query().Get("modal_order_customer_mobile")),
+		OrderModalCity:       strings.TrimSpace(r.URL.Query().Get("modal_order_city")),
+		OrderModalApartment:  strings.TrimSpace(r.URL.Query().Get("modal_order_apartment")),
 		OrderModalHasAddress: parseOptionalBool(r.URL.Query().Get("modal_order_has_address")),
 		OrderModalAddressReq: parseOptionalBool(r.URL.Query().Get("modal_order_require_address")),
 		OrderModalAmount:     strings.TrimSpace(r.URL.Query().Get("order_amount")),
@@ -190,14 +192,18 @@ func (s *Server) convertEnquiryToOrdered(w http.ResponseWriter, r *http.Request,
 	}
 
 	hasAddress := customerHasAddress(customer)
-	orderAmount, note, addressInput, fieldErrors := parseOrderSubmission(r, hasAddress)
+	existingAddress := ""
+	if customer.Address != nil {
+		existingAddress = strings.TrimSpace(*customer.Address)
+	}
+	orderAmount, note, addressInput, cityInput, apartmentInput, fieldErrors := parseOrderSubmission(r, hasAddress, existingAddress)
 	if len(fieldErrors) > 0 {
 		toast := buildValidationToast(fieldErrors, []string{"order_amount", "address"})
 		http.Redirect(w, r, enquiriesOrderValidationRedirect(clicked.StatusInterested, enquiryID, toast, r, customer.Name, customer.Mobile, hasAddress, fieldErrors["address"] != "", fieldErrors), http.StatusSeeOther)
 		return
 	}
 
-	if err := s.persistCustomerAddressForOrdered(customer, hasAddress, addressInput); err != nil {
+	if err := s.persistCustomerAddressForOrdered(customer, addressInput, cityInput, apartmentInput); err != nil {
 		http.Error(w, "failed to update customer address", http.StatusInternalServerError)
 		return
 	}
@@ -253,25 +259,27 @@ func (s *Server) handleOrderTargetError(w http.ResponseWriter, r *http.Request, 
 	return true
 }
 
-func parseOrderSubmission(r *http.Request, hasAddress bool) (int, string, string, map[string]string) {
+func parseOrderSubmission(r *http.Request, hasAddress bool, existingAddress string) (int, string, string, string, string, map[string]string) {
 	orderAmount, fieldErrors := parseOrderAmountField(r.FormValue("order_amount"))
 	note := strings.TrimSpace(r.FormValue("note"))
 	addressInput := strings.TrimSpace(r.FormValue("address"))
+	cityInput := strings.TrimSpace(r.FormValue("city_name"))
+	apartmentInput := strings.TrimSpace(r.FormValue("apartment_name"))
+	if addressInput == "" && hasAddress {
+		addressInput = strings.TrimSpace(existingAddress)
+	}
 	if !hasAddress && addressInput == "" {
 		fieldErrors["address"] = "Address is required to convert to Ordered."
 	}
-	return orderAmount, note, addressInput, fieldErrors
+	return orderAmount, note, addressInput, cityInput, apartmentInput, fieldErrors
 }
 
-func (s *Server) persistCustomerAddressForOrdered(customer customers.Customer, hasAddress bool, addressInput string) error {
-	if hasAddress {
-		return nil
-	}
+func (s *Server) persistCustomerAddressForOrdered(customer customers.Customer, addressInput string, cityInput string, apartmentInput string) error {
 	_, err := s.customerStore.Update(customer.ID, customers.UpdateInput{
 		Name:          customer.Name,
 		Address:       stringPointer(addressInput),
-		CityName:      stringPointer(customer.CityName),
-		ApartmentName: stringPointer(customer.ApartmentName),
+		CityName:      stringPointer(cityInput),
+		ApartmentName: stringPointer(apartmentInput),
 		Notes:         customer.Notes,
 	})
 	return err
@@ -336,6 +344,8 @@ func enquiriesOrderValidationRedirect(status clicked.Status, enquiryID int, vali
 	values.Set("modal_order_enquiry_id", strconv.Itoa(enquiryID))
 	values.Set("modal_order_customer_name", strings.TrimSpace(customerName))
 	values.Set("modal_order_customer_mobile", strings.TrimSpace(customerMobile))
+	values.Set("modal_order_city", strings.TrimSpace(r.FormValue("city_name")))
+	values.Set("modal_order_apartment", strings.TrimSpace(r.FormValue("apartment_name")))
 	if hasAddress {
 		values.Set("modal_order_has_address", "1")
 	} else {
@@ -475,6 +485,8 @@ type enquiriesListViewModel struct {
 	OrderModalEnquiryID  int
 	OrderModalCustomer   string
 	OrderModalMobile     string
+	OrderModalCity       string
+	OrderModalApartment  string
 	OrderModalHasAddress bool
 	OrderModalAddressReq bool
 	OrderModalAmount     string
@@ -537,6 +549,26 @@ func (v enquiriesListViewModel) CustomerMobile(id int) string {
 		return ""
 	}
 	return item.Mobile
+}
+
+func (v enquiriesListViewModel) CustomerCity(id int) string {
+	item, ok := v.customerByID[id]
+	if !ok {
+		return ""
+	}
+	return item.CityName
+}
+
+func (v enquiriesListViewModel) CustomerApartment(id int) string {
+	item, ok := v.customerByID[id]
+	if !ok {
+		return ""
+	}
+	return item.ApartmentName
+}
+
+func (v enquiriesListViewModel) CustomerAddress(id int) string {
+	return strings.TrimSpace(v.customerAddressByID[id])
 }
 
 func (v enquiriesListViewModel) CustomerHasAddress(id int) bool {
@@ -659,6 +691,9 @@ var enquiriesListTemplate = template.Must(template.New("enquiries-list").Funcs(t
               data-enquiry-id="{{.ID}}"
               data-customer-name="{{$.CustomerName .CustomerID}}"
               data-customer-mobile="{{$.CustomerMobile .CustomerID}}"
+              data-customer-city="{{$.CustomerCity .CustomerID}}"
+              data-customer-apartment="{{$.CustomerApartment .CustomerID}}"
+              data-customer-address="{{$.CustomerAddress .CustomerID}}"
               data-has-address="{{if $.CustomerHasAddress .CustomerID}}1{{else}}0{{end}}"
             >Convert to Ordered</button>
             {{end}}
@@ -742,6 +777,8 @@ var enquiriesListTemplate = template.Must(template.New("enquiries-list").Funcs(t
       data-enquiry-id="{{.OrderModalEnquiryID}}"
       data-customer-name="{{.OrderModalCustomer}}"
       data-customer-mobile="{{.OrderModalMobile}}"
+      data-customer-city="{{.OrderModalCity}}"
+      data-customer-apartment="{{.OrderModalApartment}}"
       data-has-address="{{if .OrderModalHasAddress}}1{{else}}0{{end}}"
       data-require-address="{{if .OrderModalAddressReq}}1{{else}}0{{end}}"
       data-order-amount="{{.OrderModalAmount}}"
@@ -760,11 +797,19 @@ var enquiriesListTemplate = template.Must(template.New("enquiries-list").Funcs(t
           <input id="order-customer-mobile" class="readonly" readonly>
         </div>
         <div class="field">
+          <label for="order-city-name">City</label>
+          <input id="order-city-name" name="city_name" placeholder="City">
+        </div>
+        <div class="field">
+          <label for="order-apartment-name">Apartment Complex</label>
+          <input id="order-apartment-name" name="apartment_name" placeholder="Apartment complex">
+        </div>
+        <div class="field">
           <label for="order-amount">Order Amount (required)</label>
           <input id="order-amount" name="order_amount" inputmode="numeric" placeholder="Enter order amount">
           {{if .OrderAmountError}}<div class="help error">{{.OrderAmountError}}</div>{{end}}
         </div>
-        <div class="field hidden" id="order-address-field">
+        <div class="field" id="order-address-field">
           <label for="order-address">Address</label>
           <textarea id="order-address" name="address" placeholder="Enter customer address"></textarea>
           {{if .OrderAddressError}}<div class="help error">{{.OrderAddressError}}</div>{{end}}

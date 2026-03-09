@@ -81,6 +81,8 @@ const initOrderModal = () => {
   const customerNameHidden = document.getElementById("order-customer-name-hidden");
   const customerMobileHidden = document.getElementById("order-customer-mobile-hidden");
   const hasAddressHidden = document.getElementById("order-customer-has-address-hidden");
+  const cityName = document.getElementById("order-city-name");
+  const apartmentName = document.getElementById("order-apartment-name");
   const amount = document.getElementById("order-amount");
   const note = document.getElementById("order-note");
   const addressField = document.getElementById("order-address-field");
@@ -95,6 +97,8 @@ const initOrderModal = () => {
     !customerNameHidden ||
     !customerMobileHidden ||
     !hasAddressHidden ||
+    !cityName ||
+    !apartmentName ||
     !amount ||
     !note ||
     !addressField ||
@@ -105,14 +109,8 @@ const initOrderModal = () => {
 
   const setAddressFieldState = (hasAddress, requireAddress) => {
     const shouldRequire = !hasAddress || requireAddress;
-    if (shouldRequire) {
-      addressField.classList.remove("hidden");
-      address.required = true;
-    } else {
-      addressField.classList.add("hidden");
-      address.required = false;
-      address.value = "";
-    }
+    addressField.classList.remove("hidden");
+    address.required = shouldRequire;
   };
 
   const openOrderDialog = (state) => {
@@ -127,6 +125,8 @@ const initOrderModal = () => {
     customerNameHidden.value = state.customerName;
     customerMobileHidden.value = state.customerMobile;
     hasAddressHidden.value = state.hasAddress ? "1" : "0";
+    cityName.value = state.cityName || "";
+    apartmentName.value = state.apartmentName || "";
     amount.value = state.amount || "";
     note.value = state.note || "";
     address.value = state.address || "";
@@ -141,6 +141,9 @@ const initOrderModal = () => {
         enquiryID: button.getAttribute("data-enquiry-id") || "",
         customerName: button.getAttribute("data-customer-name") || "",
         customerMobile: button.getAttribute("data-customer-mobile") || "",
+        cityName: button.getAttribute("data-customer-city") || "",
+        apartmentName: button.getAttribute("data-customer-apartment") || "",
+        address: button.getAttribute("data-customer-address") || "",
         hasAddress: (button.getAttribute("data-has-address") || "0") === "1",
       });
     });
@@ -155,6 +158,8 @@ const initOrderModal = () => {
       enquiryID: form.getAttribute("data-enquiry-id") || "",
       customerName: form.getAttribute("data-customer-name") || "",
       customerMobile: form.getAttribute("data-customer-mobile") || "",
+      cityName: form.getAttribute("data-customer-city") || "",
+      apartmentName: form.getAttribute("data-customer-apartment") || "",
       hasAddress: (form.getAttribute("data-has-address") || "0") === "1",
       requireAddress: (form.getAttribute("data-require-address") || "0") === "1",
       amount: form.getAttribute("data-order-amount") || "",

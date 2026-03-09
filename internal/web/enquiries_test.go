@@ -309,7 +309,15 @@ func TestConvertEnquiryToOrderedSuccess(t *testing.T) {
 	})
 	server, customerStore := newEnquiriesTestServer(clickedStore)
 	address := "Block B, Indiranagar"
-	customer, _ := customerStore.Create(customers.CreateInput{Name: "Asha", Mobile: "9999999999", Address: &address})
+	city := "Bengaluru"
+	apartment := "Skyline Residency"
+	customer, _ := customerStore.Create(customers.CreateInput{
+		Name:          "Asha",
+		Mobile:        "9999999999",
+		Address:       &address,
+		CityName:      &city,
+		ApartmentName: &apartment,
+	})
 	_, _, _ = clickedStore.ConvertToInterested(created.ID, clicked.ConvertInput{
 		CustomerID: customer.ID,
 		ModifiedBy: "system-admin",
@@ -318,6 +326,9 @@ func TestConvertEnquiryToOrderedSuccess(t *testing.T) {
 	form := url.Values{}
 	form.Set("order_amount", "499")
 	form.Set("note", "Confirmed")
+	form.Set("city_name", "Chennai")
+	form.Set("apartment_name", "Marina Heights")
+	form.Set("address", "Flat 401, Marina")
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/admin/enquiries/"+strconv.Itoa(created.ID)+"/order", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -341,6 +352,16 @@ func TestConvertEnquiryToOrderedSuccess(t *testing.T) {
 	}
 	if orderedRows[0].OrderAmount == nil || *orderedRows[0].OrderAmount != 499 {
 		t.Fatalf("expected order amount 499, got %+v", orderedRows[0].OrderAmount)
+	}
+	updatedCustomer, err := customerStore.Get(customer.ID)
+	if err != nil {
+		t.Fatalf("get customer: %v", err)
+	}
+	if updatedCustomer.CityName != "Chennai" || updatedCustomer.ApartmentName != "Marina Heights" {
+		t.Fatalf("expected updated city/apartment, got city=%q apartment=%q", updatedCustomer.CityName, updatedCustomer.ApartmentName)
+	}
+	if updatedCustomer.Address == nil || *updatedCustomer.Address != "Flat 401, Marina" {
+		t.Fatalf("expected updated address, got %+v", updatedCustomer.Address)
 	}
 }
 
@@ -413,7 +434,15 @@ func TestEnquiriesInterestedTabShowsConvertToOrderedAction(t *testing.T) {
 	})
 	server, customerStore := newEnquiriesTestServer(clickedStore)
 	address := "HSR Layout"
-	customer, _ := customerStore.Create(customers.CreateInput{Name: "Vikram", Mobile: "7777777777", Address: &address})
+	city := "Bengaluru"
+	apartment := "Palm Meadows"
+	customer, _ := customerStore.Create(customers.CreateInput{
+		Name:          "Vikram",
+		Mobile:        "7777777777",
+		Address:       &address,
+		CityName:      &city,
+		ApartmentName: &apartment,
+	})
 	_, _, _ = clickedStore.ConvertToInterested(created.ID, clicked.ConvertInput{
 		CustomerID: customer.ID,
 		ModifiedBy: "system-admin",
@@ -434,6 +463,12 @@ func TestEnquiriesInterestedTabShowsConvertToOrderedAction(t *testing.T) {
 	}
 	if !strings.Contains(body, `/assets/enquiries-form.js`) {
 		t.Fatalf("expected enquiries form asset on interested tab")
+	}
+	if !strings.Contains(body, `name="city_name"`) || !strings.Contains(body, `name="apartment_name"`) || !strings.Contains(body, `name="address"`) {
+		t.Fatalf("expected city/apartment/address fields in order modal")
+	}
+	if !strings.Contains(body, `data-customer-city="Bengaluru"`) || !strings.Contains(body, `data-customer-apartment="Palm Meadows"`) || !strings.Contains(body, `data-customer-address="HSR Layout"`) {
+		t.Fatalf("expected existing city/apartment/address values on order action")
 	}
 }
 

@@ -11,6 +11,8 @@ type OrderModalState = {
   enquiryID: string;
   customerName: string;
   customerMobile: string;
+  cityName?: string;
+  apartmentName?: string;
   hasAddress: boolean;
   requireAddress?: boolean;
   amount?: string;
@@ -101,6 +103,8 @@ const initOrderModal = (): void => {
   const customerNameHidden = document.getElementById("order-customer-name-hidden") as HTMLInputElement | null;
   const customerMobileHidden = document.getElementById("order-customer-mobile-hidden") as HTMLInputElement | null;
   const hasAddressHidden = document.getElementById("order-customer-has-address-hidden") as HTMLInputElement | null;
+  const cityName = document.getElementById("order-city-name") as HTMLInputElement | null;
+  const apartmentName = document.getElementById("order-apartment-name") as HTMLInputElement | null;
   const amount = document.getElementById("order-amount") as HTMLInputElement | null;
   const note = document.getElementById("order-note") as HTMLTextAreaElement | null;
   const addressField = document.getElementById("order-address-field") as HTMLDivElement | null;
@@ -115,6 +119,8 @@ const initOrderModal = (): void => {
     !customerNameHidden ||
     !customerMobileHidden ||
     !hasAddressHidden ||
+    !cityName ||
+    !apartmentName ||
     !amount ||
     !note ||
     !addressField ||
@@ -125,14 +131,8 @@ const initOrderModal = (): void => {
 
   const setAddressFieldState = (hasAddress: boolean, requireAddress: boolean): void => {
     const shouldRequire = !hasAddress || requireAddress;
-    if (shouldRequire) {
-      addressField.classList.remove("hidden");
-      address.required = true;
-    } else {
-      addressField.classList.add("hidden");
-      address.required = false;
-      address.value = "";
-    }
+    addressField.classList.remove("hidden");
+    address.required = shouldRequire;
   };
 
   const openOrderDialog = (state: OrderModalState): void => {
@@ -147,6 +147,8 @@ const initOrderModal = (): void => {
     customerNameHidden.value = state.customerName;
     customerMobileHidden.value = state.customerMobile;
     hasAddressHidden.value = state.hasAddress ? "1" : "0";
+    cityName.value = state.cityName ?? "";
+    apartmentName.value = state.apartmentName ?? "";
     amount.value = state.amount ?? "";
     note.value = state.note ?? "";
     address.value = state.address ?? "";
@@ -161,6 +163,9 @@ const initOrderModal = (): void => {
         enquiryID: button.getAttribute("data-enquiry-id") ?? "",
         customerName: button.getAttribute("data-customer-name") ?? "",
         customerMobile: button.getAttribute("data-customer-mobile") ?? "",
+        cityName: button.getAttribute("data-customer-city") ?? "",
+        apartmentName: button.getAttribute("data-customer-apartment") ?? "",
+        address: button.getAttribute("data-customer-address") ?? "",
         hasAddress: (button.getAttribute("data-has-address") ?? "0") === "1",
       });
     });
@@ -175,6 +180,8 @@ const initOrderModal = (): void => {
       enquiryID: form.getAttribute("data-enquiry-id") ?? "",
       customerName: form.getAttribute("data-customer-name") ?? "",
       customerMobile: form.getAttribute("data-customer-mobile") ?? "",
+      cityName: form.getAttribute("data-customer-city") ?? "",
+      apartmentName: form.getAttribute("data-customer-apartment") ?? "",
       hasAddress: (form.getAttribute("data-has-address") ?? "0") === "1",
       requireAddress: (form.getAttribute("data-require-address") ?? "0") === "1",
       amount: form.getAttribute("data-order-amount") ?? "",
