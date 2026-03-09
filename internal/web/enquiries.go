@@ -80,6 +80,13 @@ func (s *Server) renderEnquiriesList(w http.ResponseWriter, r *http.Request) {
 		Rows:            items,
 		Flash:           strings.TrimSpace(r.URL.Query().Get("flash")),
 		ValidationToast: strings.TrimSpace(r.URL.Query().Get("error")),
+		OpenConvertModal: strings.TrimSpace(r.URL.Query().Get("open_convert_modal")) == "1",
+		ModalEnquiryID:   parseModalEnquiryID(r.URL.Query().Get("modal_enquiry_id")),
+		ModalCustomerID:  strings.TrimSpace(r.URL.Query().Get("customer_id")),
+		ModalQuickName:   strings.TrimSpace(r.URL.Query().Get("quick_customer_name")),
+		ModalQuickMobile: strings.TrimSpace(r.URL.Query().Get("quick_customer_mobile")),
+		ModalNote:        strings.TrimSpace(r.URL.Query().Get("note")),
+		ModalSearch:      strings.TrimSpace(r.URL.Query().Get("customer_search")),
 		CustomerOptions: customerOptions,
 		customerByID:    customerByID,
 	}
@@ -96,12 +103,12 @@ func (s *Server) convertEnquiryToInterested(w http.ResponseWriter, r *http.Reque
 
 	customerID, customerErr := resolveCustomerIDForConversion(r, s.customerStore)
 	if customerErr != "" {
-		http.Redirect(w, r, enquiriesRedirect(clicked.StatusClicked, "", customerErr), http.StatusSeeOther)
+		http.Redirect(w, r, enquiriesValidationRedirect(clicked.StatusClicked, enquiryID, customerErr, r), http.StatusSeeOther)
 		return
 	}
 	note := strings.TrimSpace(r.FormValue("note"))
 	if len(note) > 500 {
-		http.Redirect(w, r, enquiriesRedirect(clicked.StatusClicked, "", "Note must be 500 characters or fewer."), http.StatusSeeOther)
+		http.Redirect(w, r, enquiriesValidationRedirect(clicked.StatusClicked, enquiryID, "Note must be 500 characters or fewer.", r), http.StatusSeeOther)
 		return
 	}
 	_, alreadyConverted, err := s.clickedStore.ConvertToInterested(enquiryID, clicked.ConvertInput{
@@ -133,6 +140,26 @@ func enquiriesRedirect(status clicked.Status, flash string, errMsg string) strin
 		return base + "&error=" + url.QueryEscape(errMsg)
 	}
 	return base
+}
+
+func enquiriesValidationRedirect(status clicked.Status, enquiryID int, errMsg string, r *http.Request) string {
+	redirect := enquiriesRedirect(status, "", errMsg)
+	return redirect +
+		"&open_convert_modal=1" +
+		"&modal_enquiry_id=" + url.QueryEscape(strconv.Itoa(enquiryID)) +
+		"&customer_id=" + url.QueryEscape(strings.TrimSpace(r.FormValue("customer_id"))) +
+		"&quick_customer_name=" + url.QueryEscape(strings.TrimSpace(r.FormValue("quick_customer_name"))) +
+		"&quick_customer_mobile=" + url.QueryEscape(strings.TrimSpace(r.FormValue("quick_customer_mobile"))) +
+		"&note=" + url.QueryEscape(strings.TrimSpace(r.FormValue("note"))) +
+		"&customer_search=" + url.QueryEscape(strings.TrimSpace(r.FormValue("customer_search")))
+}
+
+func parseModalEnquiryID(raw string) int {
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value <= 0 {
+		return 0
+	}
+	return value
 }
 
 func resolveCustomerIDForConversion(r *http.Request, customerStore customers.Store) (int, string) {
@@ -197,6 +224,13 @@ type enquiriesListViewModel struct {
 	Rows            []clicked.Enquiry
 	Flash           string
 	ValidationToast string
+	OpenConvertModal bool
+	ModalEnquiryID   int
+	ModalCustomerID  string
+	ModalQuickName   string
+	ModalQuickMobile string
+	ModalNote        string
+	ModalSearch      string
 	CustomerOptions []customers.ListItem
 	customerByID    map[int]customers.ListItem
 }
@@ -299,7 +333,7 @@ var enquiriesListTemplate = template.Must(template.New("enquiries-list").Funcs(t
       <a href="/admin/enquiries?status=interested" class="{{.TabClass "interested"}}">Interested</a>
     </div>
     {{if .Flash}}<div class="toast success">{{.Flash}}</div>{{end}}
-    {{if .ValidationToast}}<div class="toast error">{{.ValidationToast}}</div>{{end}}
+    {{if .ValidationToast}}{{if not .OpenConvertModal}}<div class="toast error">{{.ValidationToast}}</div>{{end}}{{end}}
     <table>
       <thead>
         <tr>
@@ -350,14 +384,27 @@ var enquiriesListTemplate = template.Must(template.New("enquiries-list").Funcs(t
   </main>
   {{if .IsClickedTab}}
   <dialog id="convert-dialog">
-    <form id="convert-form" class="dialog-card" method="post" action="">
+    <form
+      id="convert-form"
+      class="dialog-card"
+      method="post"
+      action=""
+      data-open-on-load="{{if .OpenConvertModal}}1{{else}}0{{end}}"
+      data-enquiry-id="{{.ModalEnquiryID}}"
+      data-customer-id="{{.ModalCustomerID}}"
+      data-quick-customer-name="{{.ModalQuickName}}"
+      data-quick-customer-mobile="{{.ModalQuickMobile}}"
+      data-note="{{.ModalNote}}"
+      data-customer-search="{{.ModalSearch}}"
+    >
       <h2 class="dialog-title">Convert to Interested</h2>
+      {{if .OpenConvertModal}}{{if .ValidationToast}}<div class="toast error" role="alert">{{.ValidationToast}}</div>{{end}}{{end}}
       <div class="form-grid">
         <div class="section">
           <p class="section-title">Search existing customer</p>
           <div class="field">
             <label for="customer-search">Search customer</label>
-            <input id="customer-search" placeholder="Search by name or mobile">
+            <input id="customer-search" name="customer_search" placeholder="Search by name or mobile">
           </div>
           <div class="field">
             <label for="customer-id">Customer (required)</label>
@@ -399,6 +446,9 @@ var enquiriesListTemplate = template.Must(template.New("enquiries-list").Funcs(t
       var cancel = document.getElementById("cancel-convert");
       var search = document.getElementById("customer-search");
       var select = document.getElementById("customer-id");
+      var quickName = document.getElementById("quick-customer-name");
+      var quickMobile = document.getElementById("quick-customer-mobile");
+      var note = document.getElementById("enquiry-note");
       if (!dialog || !form || !cancel || !search || !select) return;
 
       var originalOptions = Array.prototype.slice.call(select.querySelectorAll("option"));
@@ -418,13 +468,24 @@ var enquiriesListTemplate = template.Must(template.New("enquiries-list").Funcs(t
         });
       }
 
+      function openDialog(state) {
+        if (!state || !state.enquiryID) return;
+        form.setAttribute("action", "/admin/enquiries/" + state.enquiryID + "/convert");
+        form.reset();
+        search.value = state.search || "";
+        if (quickName) quickName.value = state.quickName || "";
+        if (quickMobile) quickMobile.value = state.quickMobile || "";
+        if (note) note.value = state.note || "";
+        filterOptions();
+        if (state.customerID) {
+          select.value = state.customerID;
+        }
+        dialog.showModal();
+      }
+
       document.querySelectorAll(".open-convert-dialog").forEach(function (button) {
         button.addEventListener("click", function () {
-          var id = button.getAttribute("data-enquiry-id");
-          form.setAttribute("action", "/admin/enquiries/" + id + "/convert");
-          form.reset();
-          filterOptions();
-          dialog.showModal();
+          openDialog({ enquiryID: button.getAttribute("data-enquiry-id") });
         });
       });
 
@@ -433,6 +494,17 @@ var enquiriesListTemplate = template.Must(template.New("enquiries-list").Funcs(t
       });
 
       search.addEventListener("input", filterOptions);
+
+      if (form.getAttribute("data-open-on-load") === "1") {
+        openDialog({
+          enquiryID: form.getAttribute("data-enquiry-id"),
+          customerID: form.getAttribute("data-customer-id"),
+          quickName: form.getAttribute("data-quick-customer-name"),
+          quickMobile: form.getAttribute("data-quick-customer-mobile"),
+          note: form.getAttribute("data-note"),
+          search: form.getAttribute("data-customer-search")
+        });
+      }
     })();
   </script>
   {{end}}

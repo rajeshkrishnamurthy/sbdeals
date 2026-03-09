@@ -154,6 +154,8 @@ func TestConvertEnquiryRejectsMixedExistingAndQuickCreate(t *testing.T) {
 	form.Set("customer_id", strconv.Itoa(customer.ID))
 	form.Set("quick_customer_name", "Asha")
 	form.Set("quick_customer_mobile", "9123456789")
+	form.Set("customer_search", "raje")
+	form.Set("note", "call later")
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/admin/enquiries/"+strconv.Itoa(created.ID)+"/convert", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -166,6 +168,27 @@ func TestConvertEnquiryRejectsMixedExistingAndQuickCreate(t *testing.T) {
 	if !strings.Contains(location, "Choose+either+existing+customer+or+quick-create+details.") {
 		t.Fatalf("expected mixed input validation error, got %q", location)
 	}
+	if !strings.Contains(location, "open_convert_modal=1") {
+		t.Fatalf("expected modal to reopen on validation, got %q", location)
+	}
+	if !strings.Contains(location, "modal_enquiry_id="+strconv.Itoa(created.ID)) {
+		t.Fatalf("expected enquiry id in modal redirect, got %q", location)
+	}
+	if !strings.Contains(location, "customer_id="+strconv.Itoa(customer.ID)) {
+		t.Fatalf("expected customer id to be preserved, got %q", location)
+	}
+	if !strings.Contains(location, "quick_customer_name=Asha") {
+		t.Fatalf("expected quick customer name to be preserved, got %q", location)
+	}
+	if !strings.Contains(location, "quick_customer_mobile=9123456789") {
+		t.Fatalf("expected quick customer mobile to be preserved, got %q", location)
+	}
+	if !strings.Contains(location, "customer_search=raje") {
+		t.Fatalf("expected customer search to be preserved, got %q", location)
+	}
+	if !strings.Contains(location, "note=call+later") {
+		t.Fatalf("expected note to be preserved, got %q", location)
+	}
 
 	clickedRows, _ := clickedStore.ListByStatus(clicked.StatusClicked)
 	if len(clickedRows) != 1 {
@@ -174,6 +197,39 @@ func TestConvertEnquiryRejectsMixedExistingAndQuickCreate(t *testing.T) {
 	interestedRows, _ := clickedStore.ListByStatus(clicked.StatusInterested)
 	if len(interestedRows) != 0 {
 		t.Fatalf("expected no interested rows, got %+v", interestedRows)
+	}
+}
+
+func TestEnquiriesListValidationToastShownInModalWhenReopenRequested(t *testing.T) {
+	clickedStore := clicked.NewMemoryStore()
+	created, _ := clickedStore.CreateClicked(clicked.CreateInput{
+		ItemID:     9,
+		ItemType:   clicked.ItemTypeBook,
+		ItemTitle:  "Book Nine",
+		SourcePage: "catalog",
+	})
+	server, _ := newEnquiriesTestServer(clickedStore)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/admin/enquiries?status=clicked&error=Choose+either+existing+customer+or+quick-create+details.&open_convert_modal=1&modal_enquiry_id="+strconv.Itoa(created.ID)+"&customer_id=7&quick_customer_name=Asha&quick_customer_mobile=9123456789&note=call+later&customer_search=ra",
+		nil,
+	)
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `data-open-on-load="1"`) {
+		t.Fatalf("expected modal open-on-load marker, got body: %s", body)
+	}
+	if !strings.Contains(body, `role="alert">Choose either existing customer or quick-create details.`) {
+		t.Fatalf("expected in-modal validation toast, got body: %s", body)
+	}
+	if !strings.Contains(body, `data-enquiry-id="`+strconv.Itoa(created.ID)+`"`) {
+		t.Fatalf("expected modal enquiry id in markup, got body: %s", body)
 	}
 }
 
