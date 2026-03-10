@@ -950,28 +950,24 @@ var booksListTemplate = template.Must(template.New("books-list").Funcs(template.
     .row-link { color: var(--accent); font-weight: 600; }
     .inline-switch { display:flex; gap:8px; align-items:center; }
     .switch {
-      min-width:88px;
       border:0;
-      border-radius:999px;
-      padding:3px 10px 3px 5px;
+      background:transparent;
+      padding:0;
       display:inline-flex;
       align-items:center;
-      justify-content:flex-start;
-      font-weight:700;
-      background:#e5e7eb;
       cursor:pointer;
-      box-shadow: inset 0 0 0 1px #d1d5db;
     }
-    .switch.on { background:#22c55e; box-shadow: inset 0 0 0 1px #16a34a; }
     .switch-track {
       width:38px;
       height:22px;
       border-radius:999px;
-      background:rgba(255,255,255,0.35);
+      background:#d1d5db;
+      box-shadow: inset 0 0 0 1px #c0c7d1;
       position:relative;
       display:inline-block;
       flex-shrink:0;
     }
+    .switch.on .switch-track { background:#86efac; box-shadow: inset 0 0 0 1px #16a34a; }
     .switch-knob {
       width:18px;
       height:18px;

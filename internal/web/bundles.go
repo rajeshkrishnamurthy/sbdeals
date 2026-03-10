@@ -921,28 +921,24 @@ var bundlesListTemplate = template.Must(template.New("bundles-list").Funcs(templ
     .toast-error { position:fixed; top:16px; right:16px; max-width:min(420px, 90vw); z-index:999; margin:0; padding:10px 12px; border-radius:10px; background:#fee2e2; color:#991b1b; border:1px solid #fecaca; box-shadow:0 8px 24px rgba(0,0,0,0.12); }
     .inline-switch { display:flex; gap:8px; align-items:center; }
     .switch {
-      min-width:88px;
       border:0;
-      border-radius:999px;
-      padding:3px 10px 3px 5px;
+      background:transparent;
+      padding:0;
       display:inline-flex;
       align-items:center;
-      justify-content:flex-start;
-      font-weight:700;
-      background:#e5e7eb;
       cursor:pointer;
-      box-shadow: inset 0 0 0 1px #d1d5db;
     }
-    .switch.on { background:#22c55e; box-shadow: inset 0 0 0 1px #16a34a; }
     .switch-track {
       width:38px;
       height:22px;
       border-radius:999px;
-      background:rgba(255,255,255,0.35);
+      background:#d1d5db;
+      box-shadow: inset 0 0 0 1px #c0c7d1;
       position:relative;
       display:inline-block;
       flex-shrink:0;
     }
+    .switch.on .switch-track { background:#86efac; box-shadow: inset 0 0 0 1px #16a34a; }
     .switch-knob {
       width:18px;
       height:18px;
