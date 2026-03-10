@@ -1031,10 +1031,47 @@ var railsListTemplate = template.Must(template.New("rails-list").Funcs(template.
     th { font-size:0.9rem; color:var(--muted); }
     .toast-success { position:fixed; top:16px; right:16px; max-width:min(420px, 90vw); z-index:999; margin:0; padding:10px 12px; border-radius:10px; background:#d1fae5; color:#065f46; border:1px solid #6ee7b7; box-shadow:0 8px 24px rgba(0,0,0,0.12); }
     .toast-error { position:fixed; top:16px; right:16px; max-width:min(420px, 90vw); z-index:999; margin:0; padding:10px 12px; border-radius:10px; background:#fee2e2; color:#991b1b; border:1px solid #fecaca; box-shadow:0 8px 24px rgba(0,0,0,0.12); }
-    .inline-publish, .inline-order { display:flex; gap:8px; align-items:center; }
-    .toggle { padding:5px 9px; border-radius:999px; border:1px solid var(--line); cursor:pointer; font-weight:600; font-size:0.8rem; background:white; }
-    .toggle.on { background:#dcfce7; color:#166534; border-color:#86efac; }
-    .toggle.off { background:#f3f4f6; color:#374151; border-color:#d1d5db; }
+    .inline-switch, .inline-order { display:flex; gap:8px; align-items:center; }
+    .switch {
+      min-width:88px;
+      border:0;
+      border-radius:999px;
+      padding:3px 10px 3px 5px;
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      font-size:0.78rem;
+      font-weight:700;
+      letter-spacing:0.02em;
+      text-transform:uppercase;
+      color:#6b7280;
+      background:#e5e7eb;
+      cursor:pointer;
+      box-shadow: inset 0 0 0 1px #d1d5db;
+    }
+    .switch.on { color:#065f46; background:#22c55e; box-shadow: inset 0 0 0 1px #16a34a; }
+    .switch-track {
+      width:38px;
+      height:22px;
+      border-radius:999px;
+      background:rgba(255,255,255,0.35);
+      position:relative;
+      display:inline-block;
+      flex-shrink:0;
+    }
+    .switch-knob {
+      width:18px;
+      height:18px;
+      border-radius:50%;
+      position:absolute;
+      top:2px;
+      left:2px;
+      background:#ffffff;
+      box-shadow:0 1px 3px rgba(0,0,0,0.3);
+      transition:left 0.15s ease;
+    }
+    .switch.on .switch-knob { left:18px; }
+    .switch-text { line-height:1; }
     .recency { color:var(--muted); font-size:0.8rem; }
     .order-btn { padding:5px 8px; border:1px solid var(--line); border-radius:6px; background:white; cursor:pointer; }
     .row-link { color:var(--accent); font-weight:600; }
@@ -1070,8 +1107,11 @@ var railsListTemplate = template.Must(template.New("rails-list").Funcs(template.
           <td>{{railTypeLabel .Type}}</td>
           <td>{{.ItemCount}}</td>
           <td>
-            <form class="inline-publish" method="post" action="/admin/rails/{{.ID}}/{{toggleActionPath .IsPublished}}">
-              <button class="toggle {{if .IsPublished}}on{{else}}off{{end}}" type="submit">{{publishState .IsPublished}}</button>
+            <form class="inline-switch" method="post" action="/admin/rails/{{.ID}}/{{toggleActionPath .IsPublished}}">
+              <button class="switch {{if .IsPublished}}on{{else}}off{{end}}" type="submit" aria-label="Toggle publish for rail {{.Title}}">
+                <span class="switch-track"><span class="switch-knob"></span></span>
+                <span class="switch-text">{{if .IsPublished}}ON{{else}}OFF{{end}}</span>
+              </button>
               <span class="recency">{{publishRecency .IsPublished .PublishedAt .UnpublishedAt}}</span>
             </form>
           </td>
