@@ -162,15 +162,216 @@ func (s *Server) renderBooksList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	filterInput := readBooksListFilterInput(r.URL.Query())
+	validationToast := strings.TrimSpace(r.URL.Query().Get("error"))
+	if shouldApplyBooksListFilters(r.URL.Query()) {
+		filtered, filterErr := filterBooksListItems(items, filterInput)
+		if filterErr == "" {
+			items = filtered
+		} else if validationToast == "" {
+			validationToast = filterErr
+		}
+	}
+
 	data := booksListViewModel{
 		Flash:           r.URL.Query().Get("flash"),
-		ValidationToast: strings.TrimSpace(r.URL.Query().Get("error")),
+		ValidationToast: validationToast,
 		ActiveSection:   "books",
 		Books:           items,
+		FilterInput:     filterInput,
+		CategoryOptions: bookCategoryOptions,
 	}
 	if err := booksListTemplate.Execute(w, data); err != nil {
 		http.Error(w, "failed to render books list", http.StatusInternalServerError)
 	}
+}
+
+func shouldApplyBooksListFilters(query url.Values) bool {
+	return strings.TrimSpace(query.Get("apply")) != ""
+}
+
+func readBooksListFilterInput(query url.Values) booksListFilterInput {
+	return booksListFilterInput{
+		Title:      strings.TrimSpace(query.Get("title")),
+		Author:     strings.TrimSpace(query.Get("author")),
+		Category:   strings.TrimSpace(query.Get("category")),
+		InStock:    strings.TrimSpace(query.Get("inStock")),
+		Published:  strings.TrimSpace(query.Get("published")),
+		MRPMin:     strings.TrimSpace(query.Get("mrpMin")),
+		MRPMax:     strings.TrimSpace(query.Get("mrpMax")),
+		MyPriceMin: strings.TrimSpace(query.Get("myPriceMin")),
+		MyPriceMax: strings.TrimSpace(query.Get("myPriceMax")),
+	}
+}
+
+func filterBooksListItems(items []books.ListItem, input booksListFilterInput) ([]books.ListItem, string) {
+	criteria, errText := parseBooksListFilterCriteria(input)
+	if errText != "" {
+		return nil, errText
+	}
+
+	filtered := make([]books.ListItem, 0, len(items))
+	for _, item := range items {
+		if !matchesBooksListFilters(item, criteria) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered, ""
+}
+
+type booksListFilterCriteria struct {
+	TitleContains       string
+	AuthorContains      string
+	Category            string
+	InStock             *bool
+	Published           *bool
+	MRPFilterActive     bool
+	MRPMin              float64
+	MRPMax              float64
+	MyPriceFilterActive bool
+	MyPriceMin          float64
+	MyPriceMax          float64
+}
+
+func parseBooksListFilterCriteria(input booksListFilterInput) (booksListFilterCriteria, string) {
+	criteria := booksListFilterCriteria{
+		TitleContains:  strings.ToLower(input.Title),
+		AuthorContains: strings.ToLower(input.Author),
+		Category:       input.Category,
+	}
+
+	inStock, errText := parseBooksListTriState(input.InStock, "In-stock")
+	if errText != "" {
+		return booksListFilterCriteria{}, errText
+	}
+	criteria.InStock = inStock
+
+	published, errText := parseBooksListTriState(input.Published, "Published")
+	if errText != "" {
+		return booksListFilterCriteria{}, errText
+	}
+	criteria.Published = published
+
+	mrpActive, mrpMin, mrpMax, errText := parseBooksListPriceRange(input.MRPMin, input.MRPMax, "MRP")
+	if errText != "" {
+		return booksListFilterCriteria{}, errText
+	}
+	criteria.MRPFilterActive = mrpActive
+	criteria.MRPMin = mrpMin
+	criteria.MRPMax = mrpMax
+
+	myPriceActive, myPriceMin, myPriceMax, errText := parseBooksListPriceRange(input.MyPriceMin, input.MyPriceMax, "My price")
+	if errText != "" {
+		return booksListFilterCriteria{}, errText
+	}
+	criteria.MyPriceFilterActive = myPriceActive
+	criteria.MyPriceMin = myPriceMin
+	criteria.MyPriceMax = myPriceMax
+
+	if criteria.Category != "" && validateOption(criteria.Category, bookCategoryOptions, "", "invalid") != "" {
+		return booksListFilterCriteria{}, "Please choose a valid category."
+	}
+
+	return criteria, ""
+}
+
+func parseBooksListTriState(raw string, label string) (*bool, string) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "any":
+		return nil, ""
+	case "yes", "true":
+		value := true
+		return &value, ""
+	case "no", "false":
+		value := false
+		return &value, ""
+	default:
+		return nil, fmt.Sprintf("Please choose a valid %s filter value.", label)
+	}
+}
+
+func parseBooksListPriceRange(minRaw string, maxRaw string, label string) (bool, float64, float64, string) {
+	minValue, errText := parseBooksListNonNegativeNumber(minRaw, fmt.Sprintf("%s minimum", label))
+	if errText != "" {
+		return false, 0, 0, errText
+	}
+	maxValue, errText := parseBooksListNonNegativeNumber(maxRaw, fmt.Sprintf("%s maximum", label))
+	if errText != "" {
+		return false, 0, 0, errText
+	}
+
+	if minValue == nil && maxValue == nil {
+		return false, 0, 0, ""
+	}
+
+	min := 0.0
+	max := math.MaxFloat64
+	if minValue != nil {
+		min = *minValue
+	}
+	if maxValue != nil {
+		max = *maxValue
+	}
+	if min > max {
+		return false, 0, 0, fmt.Sprintf("%s minimum cannot exceed maximum.", label)
+	}
+	return true, min, max, ""
+}
+
+func parseBooksListNonNegativeNumber(raw string, label string) (*float64, string) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return nil, ""
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil || parsed < 0 {
+		return nil, fmt.Sprintf("%s must be a non-negative number.", label)
+	}
+	return &parsed, ""
+}
+
+func matchesBooksListFilters(item books.ListItem, criteria booksListFilterCriteria) bool {
+	return matchesBooksListTextFilters(item, criteria) &&
+		matchesBooksListStatusFilters(item, criteria) &&
+		matchesBooksListPriceFilters(item, criteria)
+}
+
+func matchesBooksListTextFilters(item books.ListItem, criteria booksListFilterCriteria) bool {
+	if criteria.TitleContains != "" && !strings.Contains(strings.ToLower(item.Title), criteria.TitleContains) {
+		return false
+	}
+	if criteria.AuthorContains != "" && !strings.Contains(strings.ToLower(item.Author), criteria.AuthorContains) {
+		return false
+	}
+	if criteria.Category != "" && item.Category != criteria.Category {
+		return false
+	}
+	return true
+}
+
+func matchesBooksListStatusFilters(item books.ListItem, criteria booksListFilterCriteria) bool {
+	if criteria.InStock != nil && item.InStock != *criteria.InStock {
+		return false
+	}
+	if criteria.Published != nil && item.IsPublished != *criteria.Published {
+		return false
+	}
+	return true
+}
+
+func matchesBooksListPriceFilters(item books.ListItem, criteria booksListFilterCriteria) bool {
+	if criteria.MRPFilterActive && !withinRange(item.MRP, criteria.MRPMin, criteria.MRPMax) {
+		return false
+	}
+	if criteria.MyPriceFilterActive && !withinRange(item.MyPrice, criteria.MyPriceMin, criteria.MyPriceMax) {
+		return false
+	}
+	return true
+}
+
+func withinRange(value float64, min float64, max float64) bool {
+	return value >= min && value <= max
 }
 
 func (s *Server) createBook(w http.ResponseWriter, r *http.Request) {
@@ -820,6 +1021,42 @@ type booksListViewModel struct {
 	ValidationToast string
 	ActiveSection   string
 	Books           []books.ListItem
+	FilterInput     booksListFilterInput
+	CategoryOptions []string
+}
+
+type booksListFilterInput struct {
+	Title      string
+	Author     string
+	Category   string
+	InStock    string
+	Published  string
+	MRPMin     string
+	MRPMax     string
+	MyPriceMin string
+	MyPriceMax string
+}
+
+func (m booksListViewModel) CategorySelected(value string) bool {
+	return m.FilterInput.Category == value
+}
+
+func (m booksListViewModel) InStockSelected(value string) bool {
+	current := strings.TrimSpace(strings.ToLower(m.FilterInput.InStock))
+	target := strings.TrimSpace(strings.ToLower(value))
+	if current == "" && target == "any" {
+		return true
+	}
+	return current == target
+}
+
+func (m booksListViewModel) PublishedSelected(value string) bool {
+	current := strings.TrimSpace(strings.ToLower(m.FilterInput.Published))
+	target := strings.TrimSpace(strings.ToLower(value))
+	if current == "" && target == "any" {
+		return true
+	}
+	return current == target
 }
 
 type bookSummaryViewModel struct {
@@ -965,6 +1202,13 @@ var booksListTemplate = template.Must(template.New("books-list").Funcs(template.
     .admin-nav-link.active { background:#e6f4f2; color:#0a5f57; }
     .toolbar { display:flex; align-items:center; justify-content:space-between; margin:16px 0; }
     .button { background: var(--accent); color:white; padding:10px 14px; border-radius:8px; text-decoration:none; font-weight:600; border:none; }
+    .filters { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin:0 0 12px; }
+    .filters-grid { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:10px; }
+    .filters-field label { display:block; font-size:0.85rem; color:var(--muted); margin-bottom:4px; }
+    .filters-field input, .filters-field select { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font:inherit; }
+    .range-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .filters-actions { margin-top:10px; display:flex; gap:10px; align-items:center; }
+    .secondary { color:var(--accent); text-decoration:none; font-weight:600; }
     table { width:100%; border-collapse:collapse; background: var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
     th, td { padding:8px 10px; text-align:left; border-bottom:1px solid var(--line); vertical-align:middle; }
     th { font-size:0.9rem; color:var(--muted); }
@@ -1008,6 +1252,12 @@ var booksListTemplate = template.Must(template.New("books-list").Funcs(template.
     .recency { color:var(--muted); font-size:0.8rem; }
     .price { font-variant-numeric: tabular-nums; }
     .toast-error { position:fixed; top:16px; right:16px; max-width:min(420px, 90vw); z-index:999; margin:0; padding:10px 12px; border-radius:10px; background:#fee2e2; color:#991b1b; border:1px solid #fecaca; box-shadow:0 8px 24px rgba(0,0,0,0.12); }
+    @media (max-width: 960px) {
+      .filters-grid { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 640px) {
+      .filters-grid { grid-template-columns:1fr; }
+    }
   </style>
 </head>
 <body>
@@ -1023,6 +1273,61 @@ var booksListTemplate = template.Must(template.New("books-list").Funcs(template.
     </div>
     {{if .Flash}}<p class="flash">{{.Flash}}</p>{{end}}
     {{if .ValidationToast}}<p class="toast-error" role="alert">{{.ValidationToast}}</p>{{end}}
+    <form class="filters" method="get" action="/admin/books">
+      <div class="filters-grid">
+        <div class="filters-field">
+          <label for="filter-title">Title</label>
+          <input id="filter-title" name="title" value="{{.FilterInput.Title}}" placeholder="Title contains">
+        </div>
+        <div class="filters-field">
+          <label for="filter-author">Author</label>
+          <input id="filter-author" name="author" value="{{.FilterInput.Author}}" placeholder="Author contains">
+        </div>
+        <div class="filters-field">
+          <label for="filter-category">Category</label>
+          <select id="filter-category" name="category">
+            <option value="">Any</option>
+            {{range .CategoryOptions}}
+            <option value="{{.}}" {{if $.CategorySelected .}}selected{{end}}>{{.}}</option>
+            {{end}}
+          </select>
+        </div>
+        <div class="filters-field">
+          <label for="filter-in-stock">In-stock</label>
+          <select id="filter-in-stock" name="inStock">
+            <option value="any" {{if .InStockSelected "any"}}selected{{end}}>Any</option>
+            <option value="true" {{if .InStockSelected "true"}}selected{{end}}>Yes</option>
+            <option value="false" {{if .InStockSelected "false"}}selected{{end}}>No</option>
+          </select>
+        </div>
+        <div class="filters-field">
+          <label for="filter-published">Published</label>
+          <select id="filter-published" name="published">
+            <option value="any" {{if .PublishedSelected "any"}}selected{{end}}>Any</option>
+            <option value="true" {{if .PublishedSelected "true"}}selected{{end}}>Yes</option>
+            <option value="false" {{if .PublishedSelected "false"}}selected{{end}}>No</option>
+          </select>
+        </div>
+        <div class="filters-field">
+          <label>MRP range</label>
+          <div class="range-grid">
+            <input name="mrpMin" value="{{.FilterInput.MRPMin}}" placeholder="Min">
+            <input name="mrpMax" value="{{.FilterInput.MRPMax}}" placeholder="Max">
+          </div>
+        </div>
+        <div class="filters-field">
+          <label>My Price range</label>
+          <div class="range-grid">
+            <input name="myPriceMin" value="{{.FilterInput.MyPriceMin}}" placeholder="Min">
+            <input name="myPriceMax" value="{{.FilterInput.MyPriceMax}}" placeholder="Max">
+          </div>
+        </div>
+      </div>
+      <div class="filters-actions">
+        <button class="button" type="submit" name="apply" value="1">Apply Filters</button>
+        <a class="secondary" href="/admin/books">Reset Filters</a>
+      </div>
+    </form>
     <table>
       <thead>
         <tr>
@@ -1030,6 +1335,7 @@ var booksListTemplate = template.Must(template.New("books-list").Funcs(template.
           <th>Title</th>
           <th>Author</th>
           <th>Category</th>
+          <th>MRP</th>
           <th>My price</th>
           <th>In-stock</th>
           <th>Publish</th>
@@ -1052,6 +1358,7 @@ var booksListTemplate = template.Must(template.New("books-list").Funcs(template.
           <td>{{.Title}}</td>
           <td>{{.Author}}</td>
           <td>{{.Category}}</td>
+          <td class="price">{{money .MRP}}</td>
           <td class="price">{{money .MyPrice}}</td>
           <td>
             <form class="inline-switch" method="post" action="/admin/books/{{.ID}}/stock">
@@ -1074,7 +1381,7 @@ var booksListTemplate = template.Must(template.New("books-list").Funcs(template.
         {{end}}
       {{else}}
         <tr>
-          <td colspan="8">No books yet. Click "Add Book" to create one.</td>
+          <td colspan="9">No books yet. Click "Add Book" to create one.</td>
         </tr>
       {{end}}
       </tbody>

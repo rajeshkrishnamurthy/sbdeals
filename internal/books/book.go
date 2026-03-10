@@ -36,6 +36,7 @@ type ListItem struct {
 	Title         string
 	Author        string
 	Category      string
+	MRP           float64
 	MyPrice       float64
 	InStock       bool
 	HasCover      bool

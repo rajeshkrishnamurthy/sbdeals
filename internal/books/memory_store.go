@@ -32,6 +32,7 @@ func (s *MemoryStore) List() ([]ListItem, error) {
 			Title:         row.book.Title,
 			Author:        row.book.Author,
 			Category:      row.book.Category,
+			MRP:           row.book.MRP,
 			MyPrice:       row.book.MyPrice,
 			InStock:       row.book.InStock,
 			HasCover:      len(row.cover.Data) > 0,

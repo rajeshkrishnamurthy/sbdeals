@@ -55,6 +55,9 @@ func TestMemoryStoreCreateDefaultsInStockAndList(t *testing.T) {
 	if items[0].Title != "The Hobbit" {
 		t.Fatalf("unexpected title in list: %q", items[0].Title)
 	}
+	if items[0].MRP != 499 {
+		t.Fatalf("expected list item MRP 499, got %v", items[0].MRP)
+	}
 	if !items[0].HasCover {
 		t.Fatalf("expected list item to report cover presence")
 	}

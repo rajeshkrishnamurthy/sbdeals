@@ -51,7 +51,7 @@ func TestBooksListRendersColumnsAndRows(t *testing.T) {
 	}
 
 	body := rr.Body.String()
-	checks := []string{"Books", "Add Book", "Cover", "Title", "Author", "Category", "My price", "In-stock", "Publish", "View/Edit", "Book One"}
+	checks := []string{"Books", "Add Book", "Cover", "Title", "Author", "Category", "MRP", "My price", "In-stock", "Publish", "View/Edit", "Book One"}
 	for _, check := range checks {
 		if !strings.Contains(body, check) {
 			t.Fatalf("expected body to contain %q", check)
@@ -63,6 +63,199 @@ func TestBooksListRendersColumnsAndRows(t *testing.T) {
 	}
 	if !regexp.MustCompile(`\(\d+d\)`).MatchString(body) {
 		t.Fatalf("expected recency indicator like (Xd)")
+	}
+}
+
+func TestBooksListApplyFiltersUsesDeterministicAND(t *testing.T) {
+	supplierStore := suppliers.NewMemoryStore()
+	supplier, err := supplierStore.Create(suppliers.Input{Name: "A1", WhatsApp: "+91-9", Location: "Bengaluru"})
+	if err != nil {
+		t.Fatalf("create supplier: %v", err)
+	}
+	bookStore := books.NewMemoryStore()
+
+	first, err := bookStore.Create(books.CreateInput{
+		Title:      "Diary of a Kid",
+		Cover:      books.Cover{Data: []byte("img-1"), MimeType: "image/png"},
+		SupplierID: supplier.ID,
+		Category:   "Children",
+		Format:     "Paperback",
+		Condition:  "Very good",
+		MRP:        300,
+		MyPrice:    200,
+		Author:     "Jeff Kinney",
+	})
+	if err != nil {
+		t.Fatalf("create first book: %v", err)
+	}
+	if _, err := bookStore.Publish(first.ID); err != nil {
+		t.Fatalf("publish first book: %v", err)
+	}
+
+	_, err = bookStore.Create(books.CreateInput{
+		Title:      "Diary of an Adult",
+		Cover:      books.Cover{Data: []byte("img-2"), MimeType: "image/png"},
+		SupplierID: supplier.ID,
+		Category:   "Children",
+		Format:     "Paperback",
+		Condition:  "Very good",
+		MRP:        350,
+		MyPrice:    240,
+		Author:     "Someone Else",
+	})
+	if err != nil {
+		t.Fatalf("create second book: %v", err)
+	}
+
+	third, err := bookStore.Create(books.CreateInput{
+		Title:      "Diary of a Kid Deluxe",
+		Cover:      books.Cover{Data: []byte("img-3"), MimeType: "image/png"},
+		SupplierID: supplier.ID,
+		Category:   "Children",
+		Format:     "Paperback",
+		Condition:  "Very good",
+		MRP:        300,
+		MyPrice:    200,
+		Author:     "Jeff Kinney",
+	})
+	if err != nil {
+		t.Fatalf("create third book: %v", err)
+	}
+	if _, err := bookStore.SetInStock(third.ID, false); err != nil {
+		t.Fatalf("set third book out of stock: %v", err)
+	}
+
+	s := NewServer(supplierStore, bookStore)
+	req := httptest.NewRequest(http.MethodGet, "/admin/books?apply=1&title=diary&author=jeff&category=Children&inStock=yes&published=yes&mrpMin=250&mrpMax=350&myPriceMin=190&myPriceMax=210", nil)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Diary of a Kid") {
+		t.Fatalf("expected matching book in results")
+	}
+	if strings.Contains(body, "Diary of an Adult") {
+		t.Fatalf("did not expect non-matching author row in filtered results")
+	}
+	if strings.Contains(body, "Diary of a Kid Deluxe") {
+		t.Fatalf("did not expect out-of-stock row in filtered results")
+	}
+}
+
+func TestBooksListResetFiltersRestoresDefaultList(t *testing.T) {
+	supplierStore := suppliers.NewMemoryStore()
+	supplier, err := supplierStore.Create(suppliers.Input{Name: "A1", WhatsApp: "+91-9", Location: "Bengaluru"})
+	if err != nil {
+		t.Fatalf("create supplier: %v", err)
+	}
+	bookStore := books.NewMemoryStore()
+
+	_, err = bookStore.Create(books.CreateInput{
+		Title:      "Low Price",
+		Cover:      books.Cover{Data: []byte("img-1"), MimeType: "image/png"},
+		SupplierID: supplier.ID,
+		Category:   "Fiction",
+		Format:     "Paperback",
+		Condition:  "Very good",
+		MRP:        200,
+		MyPrice:    120,
+		Author:     "One",
+	})
+	if err != nil {
+		t.Fatalf("create first book: %v", err)
+	}
+	_, err = bookStore.Create(books.CreateInput{
+		Title:      "High Price",
+		Cover:      books.Cover{Data: []byte("img-2"), MimeType: "image/png"},
+		SupplierID: supplier.ID,
+		Category:   "Fiction",
+		Format:     "Paperback",
+		Condition:  "Very good",
+		MRP:        900,
+		MyPrice:    700,
+		Author:     "Two",
+	})
+	if err != nil {
+		t.Fatalf("create second book: %v", err)
+	}
+
+	s := NewServer(supplierStore, bookStore)
+	filteredReq := httptest.NewRequest(http.MethodGet, "/admin/books?apply=1&mrpMax=250", nil)
+	filteredRR := httptest.NewRecorder()
+	s.Handler().ServeHTTP(filteredRR, filteredReq)
+	if filteredRR.Code != http.StatusOK {
+		t.Fatalf("expected filtered 200, got %d", filteredRR.Code)
+	}
+	filteredBody := filteredRR.Body.String()
+	if !strings.Contains(filteredBody, "Low Price") || strings.Contains(filteredBody, "High Price") {
+		t.Fatalf("expected filtered output to include only low-priced row")
+	}
+
+	resetReq := httptest.NewRequest(http.MethodGet, "/admin/books", nil)
+	resetRR := httptest.NewRecorder()
+	s.Handler().ServeHTTP(resetRR, resetReq)
+	if resetRR.Code != http.StatusOK {
+		t.Fatalf("expected reset 200, got %d", resetRR.Code)
+	}
+	resetBody := resetRR.Body.String()
+	if !strings.Contains(resetBody, "Low Price") || !strings.Contains(resetBody, "High Price") {
+		t.Fatalf("expected reset list to include all rows")
+	}
+}
+
+func TestBooksListInvalidNumericFiltersShowToastAndBlockApply(t *testing.T) {
+	supplierStore := suppliers.NewMemoryStore()
+	supplier, err := supplierStore.Create(suppliers.Input{Name: "A1", WhatsApp: "+91-9", Location: "Bengaluru"})
+	if err != nil {
+		t.Fatalf("create supplier: %v", err)
+	}
+	bookStore := books.NewMemoryStore()
+	_, err = bookStore.Create(books.CreateInput{
+		Title:      "One",
+		Cover:      books.Cover{Data: []byte("img-1"), MimeType: "image/png"},
+		SupplierID: supplier.ID,
+		Category:   "Fiction",
+		Format:     "Paperback",
+		Condition:  "Very good",
+		MRP:        200,
+		MyPrice:    120,
+	})
+	if err != nil {
+		t.Fatalf("create first book: %v", err)
+	}
+	_, err = bookStore.Create(books.CreateInput{
+		Title:      "Two",
+		Cover:      books.Cover{Data: []byte("img-2"), MimeType: "image/png"},
+		SupplierID: supplier.ID,
+		Category:   "Fiction",
+		Format:     "Paperback",
+		Condition:  "Very good",
+		MRP:        900,
+		MyPrice:    700,
+	})
+	if err != nil {
+		t.Fatalf("create second book: %v", err)
+	}
+
+	s := NewServer(supplierStore, bookStore)
+	req := httptest.NewRequest(http.MethodGet, "/admin/books?apply=1&mrpMin=-1", nil)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `class="toast-error"`) {
+		t.Fatalf("expected toast error for invalid filter")
+	}
+	if !strings.Contains(body, "MRP minimum must be a non-negative number.") {
+		t.Fatalf("expected numeric validation toast")
+	}
+	if !strings.Contains(body, "One") || !strings.Contains(body, "Two") {
+		t.Fatalf("expected apply to be blocked and default list shown")
 	}
 }
 
