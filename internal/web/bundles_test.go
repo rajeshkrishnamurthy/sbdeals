@@ -525,6 +525,30 @@ func TestBundlePublishFailsWithOutOfStockTitlesShowsToast(t *testing.T) {
 	}
 }
 
+func TestBundlePublishFailsWhenBundleOutOfStockShowsToast(t *testing.T) {
+	supplierStore := suppliers.NewMemoryStore()
+	_, err := supplierStore.Create(suppliers.Input{Name: "Supplier A", WhatsApp: "+91-1", Location: "Bengaluru"})
+	if err != nil {
+		t.Fatalf("create supplier 1 failed: %v", err)
+	}
+
+	s := NewServerWithStores(supplierStore, books.NewMemoryStore(), bundleOutOfStockPublishStore{})
+	req := httptest.NewRequest(http.MethodPost, "/admin/bundles/4/publish", nil)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", rr.Code)
+	}
+	location := rr.Header().Get("Location")
+	if !strings.HasPrefix(location, "/admin/bundles?error=") {
+		t.Fatalf("unexpected redirect: %s", location)
+	}
+	if !strings.Contains(location, "Cannot+publish+bundle+because+it+is+out+of+stock.") {
+		t.Fatalf("expected out-of-stock toast redirect, got %s", location)
+	}
+}
+
 type bundleFormParts struct {
 	Fields      map[string][]string
 	FileField   string
@@ -564,3 +588,22 @@ func multipartBundleForm(t *testing.T, parts bundleFormParts) (string, io.Reader
 	}
 	return writer.FormDataContentType(), buf
 }
+
+type bundleOutOfStockPublishStore struct{}
+
+func (bundleOutOfStockPublishStore) List() ([]bundles.ListItem, error) { return nil, nil }
+func (bundleOutOfStockPublishStore) Create(input bundles.CreateInput) (bundles.Bundle, error) {
+	return bundles.Bundle{}, nil
+}
+func (bundleOutOfStockPublishStore) Get(id int) (bundles.Bundle, error) { return bundles.Bundle{}, nil }
+func (bundleOutOfStockPublishStore) Update(id int, input bundles.UpdateInput) (bundles.Bundle, error) {
+	return bundles.Bundle{}, nil
+}
+func (bundleOutOfStockPublishStore) Publish(id int) (bundles.Bundle, error) {
+	return bundles.Bundle{}, bundles.ErrCannotPublishOutOfStock
+}
+func (bundleOutOfStockPublishStore) Unpublish(id int) (bundles.Bundle, error) { return bundles.Bundle{}, nil }
+func (bundleOutOfStockPublishStore) ListBooksForPicker() ([]bundles.PickerBook, error) {
+	return nil, nil
+}
+func (bundleOutOfStockPublishStore) GetImage(id int) (bundles.Image, error) { return bundles.Image{}, nil }

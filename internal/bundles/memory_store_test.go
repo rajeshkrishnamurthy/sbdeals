@@ -120,6 +120,12 @@ func TestMemoryStorePublishUnpublishAndPublishRule(t *testing.T) {
 	if len(outOfStockErr.BookTitles) != 1 || outOfStockErr.BookTitles[0] != "Book B" {
 		t.Fatalf("unexpected out-of-stock titles: %+v", outOfStockErr.BookTitles)
 	}
+
+	storeWithOutOfStock.bundles[0].InStock = false
+	_, err = storeWithOutOfStock.Publish(createdOutOfStock.ID)
+	if !errors.Is(err, ErrCannotPublishOutOfStock) {
+		t.Fatalf("expected ErrCannotPublishOutOfStock, got %v", err)
+	}
 }
 
 func TestMemoryStoreUpdate(t *testing.T) {

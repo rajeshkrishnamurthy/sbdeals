@@ -123,6 +123,9 @@ func (s *MemoryStore) Publish(id int) (Bundle, error) {
 	if index < 0 {
 		return Bundle{}, ErrNotFound
 	}
+	if !s.bundles[index].InStock {
+		return Bundle{}, ErrCannotPublishOutOfStock
+	}
 	outOfStock := outOfStockTitlesFromBooks(s.bundles[index].Books)
 	if len(outOfStock) > 0 {
 		return Bundle{}, &ErrCannotPublishWithOutOfStockBooks{BookTitles: outOfStock}

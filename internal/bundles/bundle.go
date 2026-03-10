@@ -8,6 +8,7 @@ import (
 )
 
 var ErrNotFound = errors.New("bundle not found")
+var ErrCannotPublishOutOfStock = errors.New("bundle cannot be published because it is out of stock")
 
 type ErrCannotPublishWithOutOfStockBooks struct {
 	BookTitles []string

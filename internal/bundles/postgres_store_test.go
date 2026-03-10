@@ -241,6 +241,17 @@ func TestPostgresStorePublishUnpublishAndOutOfStockRule(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(outOfStockTitlesQuery)).WithArgs(20).
 		WillReturnRows(sqlmock.NewRows([]string{"title"}).AddRow("Out Book"))
 
+	mock.ExpectQuery(regexp.QuoteMeta(publishQuery)).WithArgs(21).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(regexp.QuoteMeta(getBundleQuery)).WithArgs(21).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "supplier_id", "supplier_name", "category", "allowed_conditions", "bundle_price", "notes", "in_stock", "out_of_stock_on_interested", "bundle_image_mime_type", "is_published", "published_at", "unpublished_at"}).
+			AddRow(21, "Bundle 21", 1, "Supplier A", "Fiction", "Very good", 199.0, "", false, true, "", false, nil, now))
+	mock.ExpectQuery(regexp.QuoteMeta(getBooksQuery)).WithArgs(21).
+		WillReturnRows(sqlmock.NewRows([]string{"book_id", "title", "author", "supplier_id", "is_box_set", "category", "condition", "mrp", "my_price", "bundle_price", "in_stock"}).
+			AddRow(41, "In Book", "A", 1, false, "Fiction", "Very good", 100.0, 90.0, nil, true))
+	mock.ExpectQuery(regexp.QuoteMeta(outOfStockTitlesQuery)).WithArgs(21).
+		WillReturnRows(sqlmock.NewRows([]string{"title"}))
+
 	store := NewPostgresStore(db)
 	published, err := store.Publish(9)
 	if err != nil {
@@ -265,6 +276,11 @@ func TestPostgresStorePublishUnpublishAndOutOfStockRule(t *testing.T) {
 	}
 	if len(outOfStockErr.BookTitles) != 1 || outOfStockErr.BookTitles[0] != "Out Book" {
 		t.Fatalf("unexpected out-of-stock titles: %+v", outOfStockErr.BookTitles)
+	}
+
+	_, err = store.Publish(21)
+	if !errors.Is(err, ErrCannotPublishOutOfStock) {
+		t.Fatalf("expected ErrCannotPublishOutOfStock, got %v", err)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {

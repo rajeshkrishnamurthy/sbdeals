@@ -162,6 +162,9 @@ func (s *PostgresStore) Publish(id int) (Bundle, error) {
 		if len(outOfStockTitles) > 0 {
 			return Bundle{}, &ErrCannotPublishWithOutOfStockBooks{BookTitles: outOfStockTitles}
 		}
+		if !bundle.InStock {
+			return Bundle{}, ErrCannotPublishOutOfStock
+		}
 		return Bundle{}, ErrNotFound
 	}
 

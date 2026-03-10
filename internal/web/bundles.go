@@ -350,6 +350,10 @@ func (s *Server) publishBundle(w http.ResponseWriter, r *http.Request, bundleID 
 			http.NotFound(w, r)
 			return
 		}
+		if errors.Is(err, bundles.ErrCannotPublishOutOfStock) {
+			http.Redirect(w, r, bundlePublishRedirectPath(r, bundleID, "", "Cannot publish bundle because it is out of stock."), http.StatusSeeOther)
+			return
+		}
 		var outOfStockErr *bundles.ErrCannotPublishWithOutOfStockBooks
 		if errors.As(err, &outOfStockErr) {
 			http.Redirect(w, r, bundlePublishRedirectPath(r, bundleID, "", bundleOutOfStockMessage(outOfStockErr.BookTitles)), http.StatusSeeOther)
