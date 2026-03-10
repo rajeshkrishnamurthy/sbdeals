@@ -16,7 +16,7 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 }
 
 func (s *PostgresStore) List() ([]ListItem, error) {
-	rows, err := s.db.QueryContext(context.Background(), `SELECT id, title, author, category, mrp, my_price, in_stock, COALESCE(OCTET_LENGTH(cover_image), 0) > 0 AS has_cover, is_published, published_at, unpublished_at FROM books ORDER BY id ASC`)
+	rows, err := s.db.QueryContext(context.Background(), `SELECT id, supplier_id, title, author, category, mrp, my_price, in_stock, COALESCE(OCTET_LENGTH(cover_image), 0) > 0 AS has_cover, is_published, published_at, unpublished_at FROM books ORDER BY id ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -27,7 +27,7 @@ func (s *PostgresStore) List() ([]ListItem, error) {
 		var item ListItem
 		var publishedAt sql.NullTime
 		var unpublishedAt sql.NullTime
-		if err := rows.Scan(&item.ID, &item.Title, &item.Author, &item.Category, &item.MRP, &item.MyPrice, &item.InStock, &item.HasCover, &item.IsPublished, &publishedAt, &unpublishedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.SupplierID, &item.Title, &item.Author, &item.Category, &item.MRP, &item.MyPrice, &item.InStock, &item.HasCover, &item.IsPublished, &publishedAt, &unpublishedAt); err != nil {
 			return nil, err
 		}
 		if publishedAt.Valid {

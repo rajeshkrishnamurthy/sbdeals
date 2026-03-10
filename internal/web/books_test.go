@@ -72,6 +72,10 @@ func TestBooksListApplyFiltersUsesDeterministicAND(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create supplier: %v", err)
 	}
+	otherSupplier, err := supplierStore.Create(suppliers.Input{Name: "A2", WhatsApp: "+91-8", Location: "Bengaluru"})
+	if err != nil {
+		t.Fatalf("create second supplier: %v", err)
+	}
 	bookStore := books.NewMemoryStore()
 
 	first, err := bookStore.Create(books.CreateInput{
@@ -125,8 +129,26 @@ func TestBooksListApplyFiltersUsesDeterministicAND(t *testing.T) {
 		t.Fatalf("set third book out of stock: %v", err)
 	}
 
+	fourth, err := bookStore.Create(books.CreateInput{
+		Title:      "Diary of a Kid Supplier 2",
+		Cover:      books.Cover{Data: []byte("img-4"), MimeType: "image/png"},
+		SupplierID: otherSupplier.ID,
+		Category:   "Children",
+		Format:     "Paperback",
+		Condition:  "Very good",
+		MRP:        300,
+		MyPrice:    200,
+		Author:     "Jeff Kinney",
+	})
+	if err != nil {
+		t.Fatalf("create fourth book: %v", err)
+	}
+	if _, err := bookStore.Publish(fourth.ID); err != nil {
+		t.Fatalf("publish fourth book: %v", err)
+	}
+
 	s := NewServer(supplierStore, bookStore)
-	req := httptest.NewRequest(http.MethodGet, "/admin/books?apply=1&title=diary&author=jeff&category=Children&inStock=yes&published=yes&mrpMin=250&mrpMax=350&myPriceMin=190&myPriceMax=210", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/books?apply=1&title=diary&author=jeff&supplierId="+strconv.Itoa(supplier.ID)+"&category=Children&inStock=yes&published=yes&mrpMin=250&mrpMax=350&myPriceMin=190&myPriceMax=210", nil)
 	rr := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rr, req)
 
@@ -142,6 +164,9 @@ func TestBooksListApplyFiltersUsesDeterministicAND(t *testing.T) {
 	}
 	if strings.Contains(body, "Diary of a Kid Deluxe") {
 		t.Fatalf("did not expect out-of-stock row in filtered results")
+	}
+	if strings.Contains(body, "Diary of a Kid Supplier 2") {
+		t.Fatalf("did not expect different-supplier row in filtered results")
 	}
 }
 
@@ -255,6 +280,46 @@ func TestBooksListInvalidNumericFiltersShowToastAndBlockApply(t *testing.T) {
 		t.Fatalf("expected numeric validation toast")
 	}
 	if !strings.Contains(body, "One") || !strings.Contains(body, "Two") {
+		t.Fatalf("expected apply to be blocked and default list shown")
+	}
+}
+
+func TestBooksListInvalidSupplierFilterShowsToastAndBlocksApply(t *testing.T) {
+	supplierStore := suppliers.NewMemoryStore()
+	supplier, err := supplierStore.Create(suppliers.Input{Name: "A1", WhatsApp: "+91-9", Location: "Bengaluru"})
+	if err != nil {
+		t.Fatalf("create supplier: %v", err)
+	}
+	bookStore := books.NewMemoryStore()
+	_, err = bookStore.Create(books.CreateInput{
+		Title:      "One",
+		Cover:      books.Cover{Data: []byte("img-1"), MimeType: "image/png"},
+		SupplierID: supplier.ID,
+		Category:   "Fiction",
+		Format:     "Paperback",
+		Condition:  "Very good",
+		MRP:        200,
+		MyPrice:    120,
+	})
+	if err != nil {
+		t.Fatalf("create book: %v", err)
+	}
+
+	s := NewServer(supplierStore, bookStore)
+	req := httptest.NewRequest(http.MethodGet, "/admin/books?apply=1&supplierId=999", nil)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `class="toast-error"`) {
+		t.Fatalf("expected toast error for invalid supplier filter")
+	}
+	if !strings.Contains(body, "Please choose a valid supplier.") {
+		t.Fatalf("expected supplier validation toast")
+	}
+	if !strings.Contains(body, "One") {
 		t.Fatalf("expected apply to be blocked and default list shown")
 	}
 }

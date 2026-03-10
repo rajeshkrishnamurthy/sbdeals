@@ -161,11 +161,16 @@ func (s *Server) renderBooksList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to load books", http.StatusInternalServerError)
 		return
 	}
+	suppliersList, err := s.store.List()
+	if err != nil {
+		http.Error(w, "failed to load suppliers", http.StatusInternalServerError)
+		return
+	}
 
 	filterInput := readBooksListFilterInput(r.URL.Query())
 	validationToast := strings.TrimSpace(r.URL.Query().Get("error"))
 	if shouldApplyBooksListFilters(r.URL.Query()) {
-		filtered, filterErr := filterBooksListItems(items, filterInput)
+		filtered, filterErr := filterBooksListItems(items, filterInput, suppliersList)
 		if filterErr == "" {
 			items = filtered
 		} else if validationToast == "" {
@@ -180,6 +185,7 @@ func (s *Server) renderBooksList(w http.ResponseWriter, r *http.Request) {
 		Books:           items,
 		FilterInput:     filterInput,
 		CategoryOptions: bookCategoryOptions,
+		SupplierOptions: suppliersList,
 	}
 	if err := booksListTemplate.Execute(w, data); err != nil {
 		http.Error(w, "failed to render books list", http.StatusInternalServerError)
@@ -194,6 +200,7 @@ func readBooksListFilterInput(query url.Values) booksListFilterInput {
 	return booksListFilterInput{
 		Title:      strings.TrimSpace(query.Get("title")),
 		Author:     strings.TrimSpace(query.Get("author")),
+		SupplierID: strings.TrimSpace(query.Get("supplierId")),
 		Category:   strings.TrimSpace(query.Get("category")),
 		InStock:    strings.TrimSpace(query.Get("inStock")),
 		Published:  strings.TrimSpace(query.Get("published")),
@@ -204,8 +211,8 @@ func readBooksListFilterInput(query url.Values) booksListFilterInput {
 	}
 }
 
-func filterBooksListItems(items []books.ListItem, input booksListFilterInput) ([]books.ListItem, string) {
-	criteria, errText := parseBooksListFilterCriteria(input)
+func filterBooksListItems(items []books.ListItem, input booksListFilterInput, suppliersList []suppliers.Supplier) ([]books.ListItem, string) {
+	criteria, errText := parseBooksListFilterCriteria(input, suppliersList)
 	if errText != "" {
 		return nil, errText
 	}
@@ -223,6 +230,7 @@ func filterBooksListItems(items []books.ListItem, input booksListFilterInput) ([
 type booksListFilterCriteria struct {
 	TitleContains       string
 	AuthorContains      string
+	SupplierID          *int
 	Category            string
 	InStock             *bool
 	Published           *bool
@@ -234,12 +242,17 @@ type booksListFilterCriteria struct {
 	MyPriceMax          float64
 }
 
-func parseBooksListFilterCriteria(input booksListFilterInput) (booksListFilterCriteria, string) {
+func parseBooksListFilterCriteria(input booksListFilterInput, suppliersList []suppliers.Supplier) (booksListFilterCriteria, string) {
 	criteria := booksListFilterCriteria{
 		TitleContains:  strings.ToLower(input.Title),
 		AuthorContains: strings.ToLower(input.Author),
 		Category:       input.Category,
 	}
+	supplierID, errText := parseOptionalSupplierFilter(input.SupplierID, suppliersList)
+	if errText != "" {
+		return booksListFilterCriteria{}, errText
+	}
+	criteria.SupplierID = supplierID
 
 	inStock, errText := parseBooksListTriState(input.InStock, "In-stock")
 	if errText != "" {
@@ -274,6 +287,23 @@ func parseBooksListFilterCriteria(input booksListFilterInput) (booksListFilterCr
 	}
 
 	return criteria, ""
+}
+
+func parseOptionalSupplierFilter(raw string, suppliersList []suppliers.Supplier) (*int, string) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return nil, ""
+	}
+	id, err := strconv.Atoi(value)
+	if err != nil || id <= 0 {
+		return nil, "Please choose a valid supplier."
+	}
+	for _, item := range suppliersList {
+		if item.ID == id {
+			return &id, ""
+		}
+	}
+	return nil, "Please choose a valid supplier."
 }
 
 func parseBooksListTriState(raw string, label string) (*bool, string) {
@@ -342,6 +372,9 @@ func matchesBooksListTextFilters(item books.ListItem, criteria booksListFilterCr
 		return false
 	}
 	if criteria.AuthorContains != "" && !strings.Contains(strings.ToLower(item.Author), criteria.AuthorContains) {
+		return false
+	}
+	if criteria.SupplierID != nil && item.SupplierID != *criteria.SupplierID {
 		return false
 	}
 	if criteria.Category != "" && item.Category != criteria.Category {
@@ -1023,11 +1056,13 @@ type booksListViewModel struct {
 	Books           []books.ListItem
 	FilterInput     booksListFilterInput
 	CategoryOptions []string
+	SupplierOptions []suppliers.Supplier
 }
 
 type booksListFilterInput struct {
 	Title      string
 	Author     string
+	SupplierID string
 	Category   string
 	InStock    string
 	Published  string
@@ -1039,6 +1074,10 @@ type booksListFilterInput struct {
 
 func (m booksListViewModel) CategorySelected(value string) bool {
 	return m.FilterInput.Category == value
+}
+
+func (m booksListViewModel) SupplierSelected(value int) bool {
+	return m.FilterInput.SupplierID == strconv.Itoa(value)
 }
 
 func (m booksListViewModel) InStockSelected(value string) bool {
@@ -1282,6 +1321,15 @@ var booksListTemplate = template.Must(template.New("books-list").Funcs(template.
         <div class="filters-field">
           <label for="filter-author">Author</label>
           <input id="filter-author" name="author" value="{{.FilterInput.Author}}" placeholder="Author contains">
+        </div>
+        <div class="filters-field">
+          <label for="filter-supplier">Supplier</label>
+          <select id="filter-supplier" name="supplierId">
+            <option value="">Any</option>
+            {{range .SupplierOptions}}
+            <option value="{{.ID}}" {{if $.SupplierSelected .ID}}selected{{end}}>{{.Name}}</option>
+            {{end}}
+          </select>
         </div>
         <div class="filters-field">
           <label for="filter-category">Category</label>

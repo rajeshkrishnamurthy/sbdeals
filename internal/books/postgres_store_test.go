@@ -17,11 +17,11 @@ func TestPostgresStoreList(t *testing.T) {
 	}
 	defer db.Close()
 
-	rows := sqlmock.NewRows([]string{"id", "title", "author", "category", "mrp", "my_price", "in_stock", "has_cover", "is_published", "published_at", "unpublished_at"}).
-		AddRow(1, "The Hobbit", "Tolkien", "Fiction", 499.0, 299.0, true, true, false, nil, time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC)).
-		AddRow(2, "Legacy Row", "Anon", "Fiction", 299.0, 199.0, true, false, false, nil, nil)
+	rows := sqlmock.NewRows([]string{"id", "supplier_id", "title", "author", "category", "mrp", "my_price", "in_stock", "has_cover", "is_published", "published_at", "unpublished_at"}).
+		AddRow(1, 11, "The Hobbit", "Tolkien", "Fiction", 499.0, 299.0, true, true, false, nil, time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC)).
+		AddRow(2, 12, "Legacy Row", "Anon", "Fiction", 299.0, 199.0, true, false, false, nil, nil)
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, title, author, category, mrp, my_price, in_stock, COALESCE(OCTET_LENGTH(cover_image), 0) > 0 AS has_cover, is_published, published_at, unpublished_at FROM books ORDER BY id ASC`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, supplier_id, title, author, category, mrp, my_price, in_stock, COALESCE(OCTET_LENGTH(cover_image), 0) > 0 AS has_cover, is_published, published_at, unpublished_at FROM books ORDER BY id ASC`)).
 		WillReturnRows(rows)
 
 	store := NewPostgresStore(db)
@@ -34,6 +34,9 @@ func TestPostgresStoreList(t *testing.T) {
 	}
 	if !items[0].HasCover || items[0].Title != "The Hobbit" {
 		t.Fatalf("unexpected list row: %+v", items[0])
+	}
+	if items[0].SupplierID != 11 {
+		t.Fatalf("expected first row supplier_id=11, got %+v", items[0])
 	}
 	if items[0].MRP != 499 {
 		t.Fatalf("expected first row MRP=499, got %+v", items[0])

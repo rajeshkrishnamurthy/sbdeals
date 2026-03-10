@@ -29,6 +29,7 @@ func (s *MemoryStore) List() ([]ListItem, error) {
 	for _, row := range s.rows {
 		items = append(items, ListItem{
 			ID:            row.book.ID,
+			SupplierID:    row.book.SupplierID,
 			Title:         row.book.Title,
 			Author:        row.book.Author,
 			Category:      row.book.Category,

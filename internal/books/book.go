@@ -33,6 +33,7 @@ type Cover struct {
 // ListItem is a low-clutter row projection for the admin books list.
 type ListItem struct {
 	ID            int
+	SupplierID    int
 	Title         string
 	Author        string
 	Category      string
