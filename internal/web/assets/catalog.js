@@ -138,7 +138,6 @@ const createRail = (rail) => {
     const header = document.createElement("div");
     header.className = "rail-header";
     header.appendChild(appendText("h2", "rail-title", rail.title));
-    header.appendChild(appendText("span", "rail-kind", rail.type));
     section.appendChild(header);
     if (rail.items.length === 0) {
         const empty = document.createElement("div");
