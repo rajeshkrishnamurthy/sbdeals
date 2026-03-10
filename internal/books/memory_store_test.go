@@ -104,6 +104,41 @@ func TestMemoryStorePublishUnpublishAndPublishRule(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreSetInStockFalseAutoUnpublishes(t *testing.T) {
+	store := NewMemoryStore()
+	created, err := store.Create(CreateInput{
+		Title:      "Dune",
+		Cover:      Cover{Data: []byte("cover-1"), MimeType: "image/png"},
+		SupplierID: 2,
+		Category:   "Fiction",
+		Format:     "Hardcover",
+		Condition:  "Good as new",
+		MRP:        899,
+		MyPrice:    499,
+	})
+	if err != nil {
+		t.Fatalf("create returned error: %v", err)
+	}
+
+	if _, err := store.Publish(created.ID); err != nil {
+		t.Fatalf("publish returned error: %v", err)
+	}
+
+	updated, err := store.SetInStock(created.ID, false)
+	if err != nil {
+		t.Fatalf("set in stock returned error: %v", err)
+	}
+	if updated.InStock {
+		t.Fatalf("expected in-stock=false")
+	}
+	if updated.IsPublished {
+		t.Fatalf("expected published=false after setting out-of-stock")
+	}
+	if updated.UnpublishedAt == nil {
+		t.Fatalf("expected unpublished timestamp after setting out-of-stock")
+	}
+}
+
 func TestMemoryStoreGetCoverUpdateAndStockToggle(t *testing.T) {
 	store := NewMemoryStore()
 	created, err := store.Create(CreateInput{

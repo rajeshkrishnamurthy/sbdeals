@@ -340,6 +340,10 @@ func (s *Server) updateBundle(w http.ResponseWriter, r *http.Request, bundleID i
 		http.Error(w, "failed to update bundle", http.StatusInternalServerError)
 		return
 	}
+	if err := s.enforceRailPublicationConsistency(); err != nil {
+		http.Error(w, "failed to sync rail publish state", http.StatusInternalServerError)
+		return
+	}
 
 	http.Redirect(w, r, fmt.Sprintf("/admin/bundles/%d?flash=%s", bundleID, url.QueryEscape("Bundle updated successfully.")), http.StatusSeeOther)
 }
@@ -362,6 +366,10 @@ func (s *Server) publishBundle(w http.ResponseWriter, r *http.Request, bundleID 
 		http.Error(w, "failed to publish bundle", http.StatusInternalServerError)
 		return
 	}
+	if err := s.enforceRailPublicationConsistency(); err != nil {
+		http.Error(w, "failed to sync rail publish state", http.StatusInternalServerError)
+		return
+	}
 	http.Redirect(w, r, bundlePublishRedirectPath(r, bundleID, "Bundle published successfully.", ""), http.StatusSeeOther)
 }
 
@@ -372,6 +380,10 @@ func (s *Server) unpublishBundle(w http.ResponseWriter, r *http.Request, bundleI
 			return
 		}
 		http.Error(w, "failed to unpublish bundle", http.StatusInternalServerError)
+		return
+	}
+	if err := s.enforceRailPublicationConsistency(); err != nil {
+		http.Error(w, "failed to sync rail publish state", http.StatusInternalServerError)
 		return
 	}
 	http.Redirect(w, r, bundlePublishRedirectPath(r, bundleID, "Bundle unpublished successfully.", ""), http.StatusSeeOther)

@@ -68,7 +68,9 @@ func TestPostgresStoreConvertToInterestedBookSideEffectsAndIdempotent(t *testing
 	getByIDQuery := `SELECT id, item_id, item_type, item_title, source_page, source_rail_id, source_rail_title, status, customer_id, buyer_note, order_amount, last_modified_by, l_m_at, created_at FROM enquiries WHERE id = $1`
 	bookFlagQuery := `SELECT out_of_stock_on_interested FROM books WHERE id = $1`
 	updateBookQuery := `UPDATE books SET in_stock = FALSE, is_published = FALSE, unpublished_at = CASE WHEN is_published THEN NOW() ELSE unpublished_at END, unpublished_reason = 'out_of_stock', updated_at = NOW() WHERE id = $1 AND (in_stock = TRUE OR is_published = TRUE)`
-	unpublishBundlesQuery := `UPDATE bundles b SET is_published = FALSE, unpublished_at = NOW(), unpublished_reason = 'out_of_stock', updated_at = NOW() WHERE b.is_published = TRUE AND EXISTS (SELECT 1 FROM bundle_books bb WHERE bb.bundle_id = b.id AND bb.book_id = $1)`
+	syncBundlesQuery := `WITH affected AS (SELECT DISTINCT bb.bundle_id FROM bundle_books bb WHERE bb.book_id = $1), derived AS (SELECT a.bundle_id, COALESCE(bool_and(bk.in_stock), TRUE) AS all_in_stock FROM affected a LEFT JOIN bundle_books bb ON bb.bundle_id = a.bundle_id LEFT JOIN books bk ON bk.id = bb.book_id GROUP BY a.bundle_id) UPDATE bundles b SET in_stock = derived.all_in_stock, is_published = CASE WHEN derived.all_in_stock THEN b.is_published ELSE FALSE END, unpublished_at = CASE WHEN NOT derived.all_in_stock AND b.is_published THEN NOW() ELSE b.unpublished_at END, unpublished_reason = CASE WHEN NOT derived.all_in_stock AND b.is_published THEN 'out_of_stock' ELSE b.unpublished_reason END, updated_at = NOW() FROM derived WHERE b.id = derived.bundle_id`
+	unpublishBookRailsQuery := `UPDATE rails r SET is_published = FALSE, unpublished_at = NOW(), updated_at = NOW() WHERE r.is_published = TRUE AND r.rail_type = 'BOOK' AND NOT EXISTS (SELECT 1 FROM rail_items ri JOIN books b ON b.id = ri.item_id WHERE ri.rail_id = r.id AND b.is_published = TRUE)`
+	unpublishBundleRailsQuery := `UPDATE rails r SET is_published = FALSE, unpublished_at = NOW(), updated_at = NOW() WHERE r.is_published = TRUE AND r.rail_type = 'BUNDLE' AND NOT EXISTS (SELECT 1 FROM rail_items ri JOIN bundles b ON b.id = ri.item_id WHERE ri.rail_id = r.id AND b.is_published = TRUE)`
 	now := time.Date(2026, time.March, 9, 8, 0, 0, 0, time.UTC)
 
 	mock.ExpectBegin()
@@ -82,9 +84,13 @@ func TestPostgresStoreConvertToInterestedBookSideEffectsAndIdempotent(t *testing
 	mock.ExpectExec(regexp.QuoteMeta(updateBookQuery)).
 		WithArgs(7).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(regexp.QuoteMeta(unpublishBundlesQuery)).
+	mock.ExpectExec(regexp.QuoteMeta(syncBundlesQuery)).
 		WithArgs(7).
 		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec(regexp.QuoteMeta(unpublishBookRailsQuery)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(unpublishBundleRailsQuery)).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit()
 
 	mock.ExpectBegin()
@@ -137,6 +143,8 @@ func TestPostgresStoreConvertToInterestedBundleSideEffects(t *testing.T) {
 	updateQuery := `UPDATE enquiries SET status = 'interested', customer_id = $1, buyer_note = $2, last_modified_by = $3, l_m_at = NOW() WHERE id = $4 AND status = 'clicked' RETURNING id, item_id, item_type, item_title, source_page, source_rail_id, source_rail_title, status, customer_id, buyer_note, order_amount, last_modified_by, l_m_at, created_at`
 	bundleFlagQuery := `SELECT out_of_stock_on_interested FROM bundles WHERE id = $1`
 	updateBundleQuery := `UPDATE bundles SET in_stock = FALSE, is_published = FALSE, unpublished_at = CASE WHEN is_published THEN NOW() ELSE unpublished_at END, unpublished_reason = 'out_of_stock', updated_at = NOW() WHERE id = $1 AND (in_stock = TRUE OR is_published = TRUE)`
+	unpublishBookRailsQuery := `UPDATE rails r SET is_published = FALSE, unpublished_at = NOW(), updated_at = NOW() WHERE r.is_published = TRUE AND r.rail_type = 'BOOK' AND NOT EXISTS (SELECT 1 FROM rail_items ri JOIN books b ON b.id = ri.item_id WHERE ri.rail_id = r.id AND b.is_published = TRUE)`
+	unpublishBundleRailsQuery := `UPDATE rails r SET is_published = FALSE, unpublished_at = NOW(), updated_at = NOW() WHERE r.is_published = TRUE AND r.rail_type = 'BUNDLE' AND NOT EXISTS (SELECT 1 FROM rail_items ri JOIN bundles b ON b.id = ri.item_id WHERE ri.rail_id = r.id AND b.is_published = TRUE)`
 	now := time.Date(2026, time.March, 9, 8, 30, 0, 0, time.UTC)
 
 	mock.ExpectBegin()
@@ -149,6 +157,10 @@ func TestPostgresStoreConvertToInterestedBundleSideEffects(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"out_of_stock_on_interested"}).AddRow(true))
 	mock.ExpectExec(regexp.QuoteMeta(updateBundleQuery)).
 		WithArgs(23).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(unpublishBookRailsQuery)).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(unpublishBundleRailsQuery)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 

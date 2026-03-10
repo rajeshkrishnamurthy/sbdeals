@@ -188,9 +188,10 @@ func applyBookInterestedSideEffects(ctx context.Context, tx *sql.Tx, itemID int)
 	if _, err := tx.ExecContext(ctx, `UPDATE books SET in_stock = FALSE, is_published = FALSE, unpublished_at = CASE WHEN is_published THEN NOW() ELSE unpublished_at END, unpublished_reason = 'out_of_stock', updated_at = NOW() WHERE id = $1 AND (in_stock = TRUE OR is_published = TRUE)`, itemID); err != nil {
 		return err
 	}
-
-	_, err = tx.ExecContext(ctx, `UPDATE bundles b SET is_published = FALSE, unpublished_at = NOW(), unpublished_reason = 'out_of_stock', updated_at = NOW() WHERE b.is_published = TRUE AND EXISTS (SELECT 1 FROM bundle_books bb WHERE bb.bundle_id = b.id AND bb.book_id = $1)`, itemID)
-	return err
+	if err := syncDerivedBundleStockByBook(ctx, tx, itemID); err != nil {
+		return err
+	}
+	return unpublishRailsWithNoPublishedItems(ctx, tx)
 }
 
 func applyBundleInterestedSideEffects(ctx context.Context, tx *sql.Tx, itemID int) error {
@@ -198,7 +199,26 @@ func applyBundleInterestedSideEffects(ctx context.Context, tx *sql.Tx, itemID in
 	if err != nil || !enabled {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE bundles SET in_stock = FALSE, is_published = FALSE, unpublished_at = CASE WHEN is_published THEN NOW() ELSE unpublished_at END, unpublished_reason = 'out_of_stock', updated_at = NOW() WHERE id = $1 AND (in_stock = TRUE OR is_published = TRUE)`, itemID)
+	if _, err := tx.ExecContext(ctx, `UPDATE bundles SET in_stock = FALSE, is_published = FALSE, unpublished_at = CASE WHEN is_published THEN NOW() ELSE unpublished_at END, unpublished_reason = 'out_of_stock', updated_at = NOW() WHERE id = $1 AND (in_stock = TRUE OR is_published = TRUE)`, itemID); err != nil {
+		return err
+	}
+	return unpublishRailsWithNoPublishedItems(ctx, tx)
+}
+
+func syncDerivedBundleStockByBook(ctx context.Context, tx *sql.Tx, bookID int) error {
+	query := `WITH affected AS (SELECT DISTINCT bb.bundle_id FROM bundle_books bb WHERE bb.book_id = $1), derived AS (SELECT a.bundle_id, COALESCE(bool_and(bk.in_stock), TRUE) AS all_in_stock FROM affected a LEFT JOIN bundle_books bb ON bb.bundle_id = a.bundle_id LEFT JOIN books bk ON bk.id = bb.book_id GROUP BY a.bundle_id) UPDATE bundles b SET in_stock = derived.all_in_stock, is_published = CASE WHEN derived.all_in_stock THEN b.is_published ELSE FALSE END, unpublished_at = CASE WHEN NOT derived.all_in_stock AND b.is_published THEN NOW() ELSE b.unpublished_at END, unpublished_reason = CASE WHEN NOT derived.all_in_stock AND b.is_published THEN 'out_of_stock' ELSE b.unpublished_reason END, updated_at = NOW() FROM derived WHERE b.id = derived.bundle_id`
+	_, err := tx.ExecContext(ctx, query, bookID)
+	return err
+}
+
+func unpublishRailsWithNoPublishedItems(ctx context.Context, tx *sql.Tx) error {
+	bookRailsQuery := `UPDATE rails r SET is_published = FALSE, unpublished_at = NOW(), updated_at = NOW() WHERE r.is_published = TRUE AND r.rail_type = 'BOOK' AND NOT EXISTS (SELECT 1 FROM rail_items ri JOIN books b ON b.id = ri.item_id WHERE ri.rail_id = r.id AND b.is_published = TRUE)`
+	if _, err := tx.ExecContext(ctx, bookRailsQuery); err != nil {
+		return err
+	}
+
+	bundleRailsQuery := `UPDATE rails r SET is_published = FALSE, unpublished_at = NOW(), updated_at = NOW() WHERE r.is_published = TRUE AND r.rail_type = 'BUNDLE' AND NOT EXISTS (SELECT 1 FROM rail_items ri JOIN bundles b ON b.id = ri.item_id WHERE ri.rail_id = r.id AND b.is_published = TRUE)`
+	_, err := tx.ExecContext(ctx, bundleRailsQuery)
 	return err
 }
 

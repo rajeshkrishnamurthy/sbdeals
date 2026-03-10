@@ -76,6 +76,7 @@ func TestPostgresStoreCreateAndGet(t *testing.T) {
 
 	insertBundle := `INSERT INTO bundles (name, supplier_id, category, allowed_conditions, bundle_price, notes, bundle_image, bundle_image_mime_type, out_of_stock_on_interested) VALUES ($1, $2, $3, string_to_array($4, '||'), $5, $6, $7, $8, $9) RETURNING id`
 	insertBundleBook := `INSERT INTO bundle_books (bundle_id, book_id, position) VALUES ($1, $2, $3)`
+	syncBundleStockQuery := `UPDATE bundles b SET in_stock = derived.all_in_stock, is_published = CASE WHEN derived.all_in_stock THEN b.is_published ELSE FALSE END, unpublished_at = CASE WHEN NOT derived.all_in_stock AND b.is_published THEN NOW() ELSE b.unpublished_at END, unpublished_reason = CASE WHEN NOT derived.all_in_stock AND b.is_published THEN 'out_of_stock' ELSE b.unpublished_reason END, updated_at = NOW() FROM (SELECT $1::bigint AS bundle_id, COALESCE((SELECT bool_and(bk.in_stock) FROM bundle_books bb JOIN books bk ON bk.id = bb.book_id WHERE bb.bundle_id = $1), TRUE) AS all_in_stock) AS derived WHERE b.id = derived.bundle_id`
 	getBundleQuery := `SELECT b.id, b.name, b.supplier_id, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, b.notes, b.in_stock, b.out_of_stock_on_interested, b.bundle_image_mime_type, b.is_published, b.published_at, b.unpublished_at FROM bundles b JOIN suppliers s ON s.id = b.supplier_id WHERE b.id = $1`
 	getBooksQuery := `SELECT bb.book_id, b.title, b.author, b.supplier_id, b.is_box_set, b.category, b.condition, b.mrp, b.my_price, b.bundle_price, b.in_stock FROM bundle_books bb JOIN books b ON b.id = bb.book_id WHERE bb.bundle_id = $1 ORDER BY bb.position ASC`
 
@@ -85,6 +86,7 @@ func TestPostgresStoreCreateAndGet(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(22))
 	mock.ExpectExec(regexp.QuoteMeta(insertBundleBook)).WithArgs(22, 10, 0).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(insertBundleBook)).WithArgs(22, 11, 1).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(syncBundleStockQuery)).WithArgs(22).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	mock.ExpectQuery(regexp.QuoteMeta(getBundleQuery)).WithArgs(22).
@@ -119,6 +121,7 @@ func TestPostgresStoreUpdateAndNotFound(t *testing.T) {
 	updateWithImageQuery := `UPDATE bundles SET name = $1, supplier_id = $2, category = $3, allowed_conditions = string_to_array($4, '||'), bundle_price = $5, notes = $6, bundle_image = $7, bundle_image_mime_type = $8, out_of_stock_on_interested = $9, updated_at = NOW() WHERE id = $10`
 	deleteBooks := `DELETE FROM bundle_books WHERE bundle_id = $1`
 	insertBundleBook := `INSERT INTO bundle_books (bundle_id, book_id, position) VALUES ($1, $2, $3)`
+	syncBundleStockQuery := `UPDATE bundles b SET in_stock = derived.all_in_stock, is_published = CASE WHEN derived.all_in_stock THEN b.is_published ELSE FALSE END, unpublished_at = CASE WHEN NOT derived.all_in_stock AND b.is_published THEN NOW() ELSE b.unpublished_at END, unpublished_reason = CASE WHEN NOT derived.all_in_stock AND b.is_published THEN 'out_of_stock' ELSE b.unpublished_reason END, updated_at = NOW() FROM (SELECT $1::bigint AS bundle_id, COALESCE((SELECT bool_and(bk.in_stock) FROM bundle_books bb JOIN books bk ON bk.id = bb.book_id WHERE bb.bundle_id = $1), TRUE) AS all_in_stock) AS derived WHERE b.id = derived.bundle_id`
 	getBundleQuery := `SELECT b.id, b.name, b.supplier_id, s.name AS supplier_name, b.category, array_to_string(b.allowed_conditions, '||') AS allowed_conditions, b.bundle_price, b.notes, b.in_stock, b.out_of_stock_on_interested, b.bundle_image_mime_type, b.is_published, b.published_at, b.unpublished_at FROM bundles b JOIN suppliers s ON s.id = b.supplier_id WHERE b.id = $1`
 	getBooksQuery := `SELECT bb.book_id, b.title, b.author, b.supplier_id, b.is_box_set, b.category, b.condition, b.mrp, b.my_price, b.bundle_price, b.in_stock FROM bundle_books bb JOIN books b ON b.id = bb.book_id WHERE bb.bundle_id = $1 ORDER BY bb.position ASC`
 
@@ -141,6 +144,7 @@ func TestPostgresStoreUpdateAndNotFound(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(deleteBooks)).WithArgs(9).WillReturnResult(sqlmock.NewResult(0, 2))
 	mock.ExpectExec(regexp.QuoteMeta(insertBundleBook)).WithArgs(9, 40, 0).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(insertBundleBook)).WithArgs(9, 41, 1).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(syncBundleStockQuery)).WithArgs(9).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	mock.ExpectQuery(regexp.QuoteMeta(getBundleQuery)).WithArgs(9).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "supplier_id", "supplier_name", "category", "allowed_conditions", "bundle_price", "notes", "in_stock", "out_of_stock_on_interested", "bundle_image_mime_type", "is_published", "published_at", "unpublished_at"}).
@@ -281,6 +285,26 @@ func TestPostgresStorePublishUnpublishAndOutOfStockRule(t *testing.T) {
 	_, err = store.Publish(21)
 	if !errors.Is(err, ErrCannotPublishOutOfStock) {
 		t.Fatalf("expected ErrCannotPublishOutOfStock, got %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestPostgresStoreSyncDerivedStockByBook(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	query := `WITH affected AS (SELECT DISTINCT bb.bundle_id FROM bundle_books bb WHERE bb.book_id = $1), derived AS (SELECT a.bundle_id, COALESCE(bool_and(bk.in_stock), TRUE) AS all_in_stock FROM affected a LEFT JOIN bundle_books bb ON bb.bundle_id = a.bundle_id LEFT JOIN books bk ON bk.id = bb.book_id GROUP BY a.bundle_id) UPDATE bundles b SET in_stock = derived.all_in_stock, is_published = CASE WHEN derived.all_in_stock THEN b.is_published ELSE FALSE END, unpublished_at = CASE WHEN NOT derived.all_in_stock AND b.is_published THEN NOW() ELSE b.unpublished_at END, unpublished_reason = CASE WHEN NOT derived.all_in_stock AND b.is_published THEN 'out_of_stock' ELSE b.unpublished_reason END, updated_at = NOW() FROM derived WHERE b.id = derived.bundle_id`
+	mock.ExpectExec(regexp.QuoteMeta(query)).WithArgs(10).WillReturnResult(sqlmock.NewResult(0, 2))
+
+	store := NewPostgresStore(db)
+	if err := store.SyncDerivedStockByBook(10, false); err != nil {
+		t.Fatalf("sync returned error: %v", err)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {

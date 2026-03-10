@@ -121,10 +121,60 @@ func TestMemoryStorePublishUnpublishAndPublishRule(t *testing.T) {
 		t.Fatalf("unexpected out-of-stock titles: %+v", outOfStockErr.BookTitles)
 	}
 
+	storeWithOutOfStock.bundles[0].Books[1].InStock = true
 	storeWithOutOfStock.bundles[0].InStock = false
 	_, err = storeWithOutOfStock.Publish(createdOutOfStock.ID)
 	if !errors.Is(err, ErrCannotPublishOutOfStock) {
 		t.Fatalf("expected ErrCannotPublishOutOfStock, got %v", err)
+	}
+}
+
+func TestMemoryStoreSyncDerivedStockByBook(t *testing.T) {
+	store := newMemoryStoreFixture()
+	created, err := store.Create(CreateInput{
+		Name:              "Starter Bundle",
+		SupplierID:        1,
+		Category:          "Fiction",
+		AllowedConditions: []string{"Very good", "Good as new"},
+		BookIDs:           []int{10, 11},
+		BundlePrice:       499,
+	})
+	if err != nil {
+		t.Fatalf("create returned error: %v", err)
+	}
+	if !created.InStock {
+		t.Fatalf("expected created bundle to be in-stock")
+	}
+	if _, err := store.Publish(created.ID); err != nil {
+		t.Fatalf("publish returned error: %v", err)
+	}
+
+	if err := store.SyncDerivedStockByBook(10, false); err != nil {
+		t.Fatalf("sync returned error: %v", err)
+	}
+	afterOut, err := store.Get(created.ID)
+	if err != nil {
+		t.Fatalf("get after out-of-stock: %v", err)
+	}
+	if afterOut.InStock {
+		t.Fatalf("expected bundle in-stock=false after related book out-of-stock")
+	}
+	if afterOut.IsPublished {
+		t.Fatalf("expected bundle unpublished after becoming out-of-stock")
+	}
+
+	if err := store.SyncDerivedStockByBook(10, true); err != nil {
+		t.Fatalf("sync returned error: %v", err)
+	}
+	afterIn, err := store.Get(created.ID)
+	if err != nil {
+		t.Fatalf("get after in-stock restore: %v", err)
+	}
+	if !afterIn.InStock {
+		t.Fatalf("expected bundle in-stock=true after all books restored")
+	}
+	if afterIn.IsPublished {
+		t.Fatalf("expected no auto-publish when stock is restored")
 	}
 }
 

@@ -108,11 +108,43 @@ func (s *MemoryStore) Update(id int, input UpdateInput) (Bundle, error) {
 	updated.IsPublished = s.bundles[index].IsPublished
 	updated.PublishedAt = cloneTimePointer(s.bundles[index].PublishedAt)
 	updated.UnpublishedAt = cloneTimePointer(s.bundles[index].UnpublishedAt)
+	if !updated.InStock && updated.IsPublished {
+		now := time.Now().UTC()
+		updated.IsPublished = false
+		updated.UnpublishedAt = &now
+	}
 	s.bundles[index] = updated
 	if input.Image != nil {
 		s.images[id] = cloneImage(*input.Image)
 	}
 	return cloneBundle(updated), nil
+}
+
+func (s *MemoryStore) SyncDerivedStockByBook(bookID int, inStock bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now().UTC()
+	for i := range s.bundles {
+		contains := false
+		for j := range s.bundles[i].Books {
+			if s.bundles[i].Books[j].BookID != bookID {
+				continue
+			}
+			s.bundles[i].Books[j].InStock = inStock
+			contains = true
+		}
+		if !contains {
+			continue
+		}
+
+		s.bundles[i].InStock = allBundleBooksInStock(s.bundles[i].Books)
+		if !s.bundles[i].InStock && s.bundles[i].IsPublished {
+			s.bundles[i].IsPublished = false
+			s.bundles[i].UnpublishedAt = &now
+		}
+	}
+	return nil
 }
 
 func (s *MemoryStore) Publish(id int) (Bundle, error) {
@@ -123,12 +155,12 @@ func (s *MemoryStore) Publish(id int) (Bundle, error) {
 	if index < 0 {
 		return Bundle{}, ErrNotFound
 	}
-	if !s.bundles[index].InStock {
-		return Bundle{}, ErrCannotPublishOutOfStock
-	}
 	outOfStock := outOfStockTitlesFromBooks(s.bundles[index].Books)
 	if len(outOfStock) > 0 {
 		return Bundle{}, &ErrCannotPublishWithOutOfStockBooks{BookTitles: outOfStock}
+	}
+	if !s.bundles[index].InStock {
+		return Bundle{}, ErrCannotPublishOutOfStock
 	}
 	now := time.Now().UTC()
 	s.bundles[index].IsPublished = true
@@ -211,13 +243,22 @@ func (s *MemoryStore) bundleFromInput(id int, input CreateInput) Bundle {
 		Notes:                  input.Notes,
 		BookIDs:                cloneIntSlice(input.BookIDs),
 		Books:                  books,
-		InStock:                true,
+		InStock:                allBundleBooksInStock(books),
 		OutOfStockOnInterested: input.OutOfStockOnInterested,
 		ImageMimeType:          input.Image.MimeType,
 		IsPublished:            false,
 		PublishedAt:            nil,
 		UnpublishedAt:          &now,
 	}
+}
+
+func allBundleBooksInStock(books []BundleBook) bool {
+	for _, book := range books {
+		if !book.InStock {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *MemoryStore) indexByID(id int) int {

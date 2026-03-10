@@ -116,7 +116,7 @@ func TestPostgresStoreGetCoverAndSetInStock(t *testing.T) {
 		WithArgs(11).
 		WillReturnRows(sqlmock.NewRows([]string{"cover_image", "cover_mime_type"}).AddRow(nil, "image/png"))
 
-	setStockQuery := `UPDATE books SET in_stock = $1, updated_at = NOW() WHERE id = $2 RETURNING id, title, supplier_id, cover_mime_type, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, out_of_stock_on_interested, is_published, published_at, unpublished_at`
+	setStockQuery := `UPDATE books SET in_stock = $1, is_published = CASE WHEN $1 THEN is_published ELSE FALSE END, unpublished_at = CASE WHEN $1 THEN unpublished_at ELSE CASE WHEN is_published THEN NOW() ELSE unpublished_at END END, unpublished_reason = CASE WHEN $1 THEN unpublished_reason ELSE CASE WHEN is_published THEN 'out_of_stock' ELSE unpublished_reason END END, updated_at = NOW() WHERE id = $2 RETURNING id, title, supplier_id, cover_mime_type, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, out_of_stock_on_interested, is_published, published_at, unpublished_at`
 	mock.ExpectQuery(regexp.QuoteMeta(setStockQuery)).
 		WithArgs(false, 10).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "title", "supplier_id", "cover_mime_type", "is_box_set", "category", "format", "condition", "mrp", "my_price", "bundle_price", "author", "notes", "in_stock", "out_of_stock_on_interested", "is_published", "published_at", "unpublished_at"}).
@@ -148,6 +148,40 @@ func TestPostgresStoreGetCoverAndSetInStock(t *testing.T) {
 	}
 }
 
+func TestPostgresStoreSetInStockFalseAutoUnpublishes(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	setStockQuery := `UPDATE books SET in_stock = $1, is_published = CASE WHEN $1 THEN is_published ELSE FALSE END, unpublished_at = CASE WHEN $1 THEN unpublished_at ELSE CASE WHEN is_published THEN NOW() ELSE unpublished_at END END, unpublished_reason = CASE WHEN $1 THEN unpublished_reason ELSE CASE WHEN is_published THEN 'out_of_stock' ELSE unpublished_reason END END, updated_at = NOW() WHERE id = $2 RETURNING id, title, supplier_id, cover_mime_type, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, out_of_stock_on_interested, is_published, published_at, unpublished_at`
+	now := time.Date(2026, time.March, 9, 15, 0, 0, 0, time.UTC)
+	mock.ExpectQuery(regexp.QuoteMeta(setStockQuery)).
+		WithArgs(false, 12).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "title", "supplier_id", "cover_mime_type", "is_box_set", "category", "format", "condition", "mrp", "my_price", "bundle_price", "author", "notes", "in_stock", "out_of_stock_on_interested", "is_published", "published_at", "unpublished_at"}).
+			AddRow(12, "Book", 1, "image/png", false, "Fiction", "Paperback", "Used", 100.0, 90.0, nil, "", "", false, true, false, now, now))
+
+	store := NewPostgresStore(db)
+	book, err := store.SetInStock(12, false)
+	if err != nil {
+		t.Fatalf("set in stock returned error: %v", err)
+	}
+	if book.InStock {
+		t.Fatalf("expected in-stock false")
+	}
+	if book.IsPublished {
+		t.Fatalf("expected published false after out-of-stock")
+	}
+	if book.UnpublishedAt == nil {
+		t.Fatalf("expected unpublished timestamp")
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestPostgresStoreUpdateWithoutCoverAndNotFound(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -172,7 +206,7 @@ func TestPostgresStoreUpdateWithoutCoverAndNotFound(t *testing.T) {
 		OutOfStockOnInterested: true,
 	}
 
-	updateQuery := `UPDATE books SET title = $1, supplier_id = $2, is_box_set = $3, category = $4, format = $5, condition = $6, mrp = $7, my_price = $8, bundle_price = $9, author = $10, notes = $11, in_stock = $12, out_of_stock_on_interested = $13, updated_at = NOW() WHERE id = $14 RETURNING id, title, supplier_id, cover_mime_type, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, out_of_stock_on_interested, is_published, published_at, unpublished_at`
+	updateQuery := `UPDATE books SET title = $1, supplier_id = $2, is_box_set = $3, category = $4, format = $5, condition = $6, mrp = $7, my_price = $8, bundle_price = $9, author = $10, notes = $11, in_stock = $12, is_published = CASE WHEN $12 THEN is_published ELSE FALSE END, unpublished_at = CASE WHEN $12 THEN unpublished_at ELSE CASE WHEN is_published THEN NOW() ELSE unpublished_at END END, unpublished_reason = CASE WHEN $12 THEN unpublished_reason ELSE CASE WHEN is_published THEN 'out_of_stock' ELSE unpublished_reason END END, out_of_stock_on_interested = $13, updated_at = NOW() WHERE id = $14 RETURNING id, title, supplier_id, cover_mime_type, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, out_of_stock_on_interested, is_published, published_at, unpublished_at`
 	mock.ExpectQuery(regexp.QuoteMeta(updateQuery)).
 		WithArgs(input.Title, input.SupplierID, input.IsBoxSet, input.Category, input.Format, input.Condition, input.MRP, input.MyPrice, input.BundlePrice, input.Author, input.Notes, input.InStock, input.OutOfStockOnInterested, 404).
 		WillReturnError(sql.ErrNoRows)
@@ -214,7 +248,7 @@ func TestPostgresStoreUpdateWithCoverPath(t *testing.T) {
 		OutOfStockOnInterested: false,
 	}
 
-	updateWithCoverQuery := `UPDATE books SET title = $1, cover_image = $2, cover_mime_type = $3, supplier_id = $4, is_box_set = $5, category = $6, format = $7, condition = $8, mrp = $9, my_price = $10, bundle_price = $11, author = $12, notes = $13, in_stock = $14, out_of_stock_on_interested = $15, updated_at = NOW() WHERE id = $16 RETURNING id, title, supplier_id, cover_mime_type, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, out_of_stock_on_interested, is_published, published_at, unpublished_at`
+	updateWithCoverQuery := `UPDATE books SET title = $1, cover_image = $2, cover_mime_type = $3, supplier_id = $4, is_box_set = $5, category = $6, format = $7, condition = $8, mrp = $9, my_price = $10, bundle_price = $11, author = $12, notes = $13, in_stock = $14, is_published = CASE WHEN $14 THEN is_published ELSE FALSE END, unpublished_at = CASE WHEN $14 THEN unpublished_at ELSE CASE WHEN is_published THEN NOW() ELSE unpublished_at END END, unpublished_reason = CASE WHEN $14 THEN unpublished_reason ELSE CASE WHEN is_published THEN 'out_of_stock' ELSE unpublished_reason END END, out_of_stock_on_interested = $15, updated_at = NOW() WHERE id = $16 RETURNING id, title, supplier_id, cover_mime_type, is_box_set, category, format, condition, mrp, my_price, bundle_price, author, notes, in_stock, out_of_stock_on_interested, is_published, published_at, unpublished_at`
 	mock.ExpectQuery(regexp.QuoteMeta(updateWithCoverQuery)).
 		WithArgs(
 			input.Title,

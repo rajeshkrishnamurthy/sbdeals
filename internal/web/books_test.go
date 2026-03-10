@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/books"
+	"github.com/rajeshkrishnamurthy/sbdeals/internal/bundles"
+	"github.com/rajeshkrishnamurthy/sbdeals/internal/rails"
 	"github.com/rajeshkrishnamurthy/sbdeals/internal/suppliers"
 )
 
@@ -456,6 +458,179 @@ func TestBookPublishFailsWhenOutOfStockShowsToast(t *testing.T) {
 	s.Handler().ServeHTTP(listRR, listReq)
 	if !strings.Contains(listRR.Body.String(), "Cannot publish book because it is out of stock.") {
 		t.Fatalf("expected toast error on books list")
+	}
+}
+
+func TestBookStockFlipCascadesBundleStockAndRepublishStaysManual(t *testing.T) {
+	supplierStore := suppliers.NewMemoryStore()
+	supplier, err := supplierStore.Create(suppliers.Input{Name: "A1", WhatsApp: "+91-9", Location: "Bengaluru"})
+	if err != nil {
+		t.Fatalf("create supplier: %v", err)
+	}
+
+	bookStore := books.NewMemoryStore()
+	firstBook, err := bookStore.Create(books.CreateInput{
+		Title:      "Book One",
+		Cover:      books.Cover{Data: []byte("img"), MimeType: "image/png"},
+		SupplierID: supplier.ID,
+		Category:   "Fiction",
+		Format:     "Paperback",
+		Condition:  "Very good",
+		MRP:        300,
+		MyPrice:    220,
+		Author:     "Author A",
+	})
+	if err != nil {
+		t.Fatalf("create first book: %v", err)
+	}
+	secondBook, err := bookStore.Create(books.CreateInput{
+		Title:      "Book Two",
+		Cover:      books.Cover{Data: []byte("img"), MimeType: "image/png"},
+		SupplierID: supplier.ID,
+		Category:   "Fiction",
+		Format:     "Paperback",
+		Condition:  "Good as new",
+		MRP:        320,
+		MyPrice:    240,
+		Author:     "Author B",
+	})
+	if err != nil {
+		t.Fatalf("create second book: %v", err)
+	}
+
+	supplierNames := map[int]string{supplier.ID: supplier.Name}
+	pickerBooks := []bundles.PickerBook{
+		{BookID: firstBook.ID, Title: firstBook.Title, Author: firstBook.Author, SupplierID: supplier.ID, Category: firstBook.Category, Condition: firstBook.Condition, MRP: firstBook.MRP, MyPrice: firstBook.MyPrice, InStock: true},
+		{BookID: secondBook.ID, Title: secondBook.Title, Author: secondBook.Author, SupplierID: supplier.ID, Category: secondBook.Category, Condition: secondBook.Condition, MRP: secondBook.MRP, MyPrice: secondBook.MyPrice, InStock: true},
+	}
+	bundleStore := bundles.NewMemoryStore(supplierNames, pickerBooks)
+	createdBundle, err := bundleStore.Create(bundles.CreateInput{
+		Name:              "Starter Bundle",
+		SupplierID:        supplier.ID,
+		Category:          "Fiction",
+		AllowedConditions: []string{"Very good", "Good as new"},
+		BookIDs:           []int{firstBook.ID, secondBook.ID},
+		BundlePrice:       399,
+	})
+	if err != nil {
+		t.Fatalf("create bundle: %v", err)
+	}
+
+	if _, err := bookStore.Publish(firstBook.ID); err != nil {
+		t.Fatalf("publish book: %v", err)
+	}
+	if _, err := bundleStore.Publish(createdBundle.ID); err != nil {
+		t.Fatalf("publish bundle: %v", err)
+	}
+
+	s := NewServerWithStores(supplierStore, bookStore, bundleStore, rails.NewMemoryStore())
+
+	stockNoForm := url.Values{}
+	stockNoForm.Set("in_stock", "no")
+	stockNoReq := httptest.NewRequest(http.MethodPost, "/admin/books/"+strconv.Itoa(firstBook.ID)+"/stock", strings.NewReader(stockNoForm.Encode()))
+	stockNoReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	stockNoRR := httptest.NewRecorder()
+	s.Handler().ServeHTTP(stockNoRR, stockNoReq)
+	if stockNoRR.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 on out-of-stock toggle, got %d", stockNoRR.Code)
+	}
+
+	updatedBook, err := bookStore.Get(firstBook.ID)
+	if err != nil {
+		t.Fatalf("get updated book: %v", err)
+	}
+	if updatedBook.InStock {
+		t.Fatalf("expected in-stock=false after toggle")
+	}
+	if updatedBook.IsPublished {
+		t.Fatalf("expected book unpublished when set out-of-stock")
+	}
+
+	updatedBundle, err := bundleStore.Get(createdBundle.ID)
+	if err != nil {
+		t.Fatalf("get updated bundle: %v", err)
+	}
+	if updatedBundle.InStock {
+		t.Fatalf("expected bundle in-stock=false after child book out-of-stock")
+	}
+	if updatedBundle.IsPublished {
+		t.Fatalf("expected bundle unpublished when it becomes out-of-stock")
+	}
+
+	stockYesForm := url.Values{}
+	stockYesForm.Set("in_stock", "yes")
+	stockYesReq := httptest.NewRequest(http.MethodPost, "/admin/books/"+strconv.Itoa(firstBook.ID)+"/stock", strings.NewReader(stockYesForm.Encode()))
+	stockYesReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	stockYesRR := httptest.NewRecorder()
+	s.Handler().ServeHTTP(stockYesRR, stockYesReq)
+	if stockYesRR.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 on in-stock restore, got %d", stockYesRR.Code)
+	}
+
+	restoredBundle, err := bundleStore.Get(createdBundle.ID)
+	if err != nil {
+		t.Fatalf("get restored bundle: %v", err)
+	}
+	if !restoredBundle.InStock {
+		t.Fatalf("expected bundle in-stock=true after all child books restored")
+	}
+	if restoredBundle.IsPublished {
+		t.Fatalf("expected bundle to remain unpublished until manual publish")
+	}
+}
+
+func TestBookUnpublishAutoUnpublishesRailWithoutPublishedItems(t *testing.T) {
+	supplierStore := suppliers.NewMemoryStore()
+	supplier, err := supplierStore.Create(suppliers.Input{Name: "A1", WhatsApp: "+91-9", Location: "Bengaluru"})
+	if err != nil {
+		t.Fatalf("create supplier: %v", err)
+	}
+
+	bookStore := books.NewMemoryStore()
+	createdBook, err := bookStore.Create(books.CreateInput{
+		Title:      "Book One",
+		Cover:      books.Cover{Data: []byte("img"), MimeType: "image/png"},
+		SupplierID: supplier.ID,
+		Category:   "Fiction",
+		Format:     "Paperback",
+		Condition:  "Very good",
+		MRP:        300,
+		MyPrice:    220,
+		Author:     "Author",
+	})
+	if err != nil {
+		t.Fatalf("create book: %v", err)
+	}
+	if _, err := bookStore.Publish(createdBook.ID); err != nil {
+		t.Fatalf("publish book: %v", err)
+	}
+
+	railStore := rails.NewMemoryStore()
+	railData, err := railStore.Create(rails.CreateInput{Title: "Book Rail", Type: rails.RailTypeBook})
+	if err != nil {
+		t.Fatalf("create rail: %v", err)
+	}
+	if _, err := railStore.AddItem(railData.ID, createdBook.ID); err != nil {
+		t.Fatalf("add rail item: %v", err)
+	}
+	if _, err := railStore.Publish(railData.ID); err != nil {
+		t.Fatalf("publish rail: %v", err)
+	}
+
+	s := NewServerWithStores(supplierStore, bookStore, bundles.NewMemoryStore(nil, nil), railStore)
+	req := httptest.NewRequest(http.MethodPost, "/admin/books/"+strconv.Itoa(createdBook.ID)+"/unpublish", nil)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", rr.Code)
+	}
+
+	updatedRail, err := railStore.Get(railData.ID)
+	if err != nil {
+		t.Fatalf("get updated rail: %v", err)
+	}
+	if updatedRail.IsPublished {
+		t.Fatalf("expected rail unpublished when it has no published items")
 	}
 }
 

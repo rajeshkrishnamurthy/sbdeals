@@ -117,7 +117,7 @@ func (s *MemoryStore) Update(id int, input UpdateInput) (Book, error) {
 	row.book.BundlePrice = cloneFloatPointer(input.BundlePrice)
 	row.book.Author = input.Author
 	row.book.Notes = input.Notes
-	row.book.InStock = input.InStock
+	applyInStockStateTransition(&row.book, input.InStock)
 	row.book.OutOfStockOnInterested = input.OutOfStockOnInterested
 
 	if input.Cover != nil {
@@ -139,7 +139,7 @@ func (s *MemoryStore) SetInStock(id int, inStock bool) (Book, error) {
 	}
 
 	row := s.rows[idx]
-	row.book.InStock = inStock
+	applyInStockStateTransition(&row.book, inStock)
 	s.rows[idx] = row
 	return cloneBook(row.book), nil
 }
@@ -215,4 +215,14 @@ func cloneTimePointer(v *time.Time) *time.Time {
 	}
 	cloned := *v
 	return &cloned
+}
+
+func applyInStockStateTransition(book *Book, inStock bool) {
+	book.InStock = inStock
+	if inStock {
+		return
+	}
+	now := time.Now().UTC()
+	book.IsPublished = false
+	book.UnpublishedAt = &now
 }

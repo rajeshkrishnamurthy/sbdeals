@@ -70,6 +70,10 @@ func (s *PostgresStore) Create(input CreateInput) (Bundle, error) {
 		_ = tx.Rollback()
 		return Bundle{}, err
 	}
+	if err := syncBundleDerivedStockByID(ctx, tx, bundleID); err != nil {
+		_ = tx.Rollback()
+		return Bundle{}, err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return Bundle{}, err
@@ -131,6 +135,10 @@ func (s *PostgresStore) Update(id int, input UpdateInput) (Bundle, error) {
 		_ = tx.Rollback()
 		return Bundle{}, err
 	}
+	if err := syncBundleDerivedStockByID(ctx, tx, id); err != nil {
+		_ = tx.Rollback()
+		return Bundle{}, err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return Bundle{}, err
@@ -182,6 +190,13 @@ func (s *PostgresStore) Unpublish(id int) (Bundle, error) {
 		return Bundle{}, err
 	}
 	return s.Get(bundleID)
+}
+
+func (s *PostgresStore) SyncDerivedStockByBook(bookID int, _ bool) error {
+	ctx := context.Background()
+	query := `WITH affected AS (SELECT DISTINCT bb.bundle_id FROM bundle_books bb WHERE bb.book_id = $1), derived AS (SELECT a.bundle_id, COALESCE(bool_and(bk.in_stock), TRUE) AS all_in_stock FROM affected a LEFT JOIN bundle_books bb ON bb.bundle_id = a.bundle_id LEFT JOIN books bk ON bk.id = bb.book_id GROUP BY a.bundle_id) UPDATE bundles b SET in_stock = derived.all_in_stock, is_published = CASE WHEN derived.all_in_stock THEN b.is_published ELSE FALSE END, unpublished_at = CASE WHEN NOT derived.all_in_stock AND b.is_published THEN NOW() ELSE b.unpublished_at END, unpublished_reason = CASE WHEN NOT derived.all_in_stock AND b.is_published THEN 'out_of_stock' ELSE b.unpublished_reason END, updated_at = NOW() FROM derived WHERE b.id = derived.bundle_id`
+	_, err := s.db.ExecContext(ctx, query, bookID)
+	return err
 }
 
 func (s *PostgresStore) ListBooksForPicker() ([]PickerBook, error) {
@@ -308,6 +323,12 @@ func (s *PostgresStore) outOfStockBookTitles(bundleID int) ([]string, error) {
 		return nil, err
 	}
 	return titles, nil
+}
+
+func syncBundleDerivedStockByID(ctx context.Context, db execContextExecutor, bundleID int) error {
+	query := `UPDATE bundles b SET in_stock = derived.all_in_stock, is_published = CASE WHEN derived.all_in_stock THEN b.is_published ELSE FALSE END, unpublished_at = CASE WHEN NOT derived.all_in_stock AND b.is_published THEN NOW() ELSE b.unpublished_at END, unpublished_reason = CASE WHEN NOT derived.all_in_stock AND b.is_published THEN 'out_of_stock' ELSE b.unpublished_reason END, updated_at = NOW() FROM (SELECT $1::bigint AS bundle_id, COALESCE((SELECT bool_and(bk.in_stock) FROM bundle_books bb JOIN books bk ON bk.id = bb.book_id WHERE bb.bundle_id = $1), TRUE) AS all_in_stock) AS derived WHERE b.id = derived.bundle_id`
+	_, err := db.ExecContext(ctx, query, bundleID)
+	return err
 }
 
 func joinConditions(values []string) string {

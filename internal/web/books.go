@@ -361,7 +361,7 @@ func (s *Server) updateBook(w http.ResponseWriter, r *http.Request, bookID int) 
 		coverPtr = &cover
 	}
 
-	_, err = s.bookStore.Update(bookID, books.UpdateInput{
+	updatedBook, err := s.bookStore.Update(bookID, books.UpdateInput{
 		Title:                  parsed.Title,
 		Cover:                  coverPtr,
 		SupplierID:             parsed.SupplierID,
@@ -385,6 +385,14 @@ func (s *Server) updateBook(w http.ResponseWriter, r *http.Request, bookID int) 
 		http.Error(w, "failed to update book", http.StatusInternalServerError)
 		return
 	}
+	if err := s.enforceBundleStockFromBook(updatedBook.ID, updatedBook.InStock); err != nil {
+		http.Error(w, "failed to sync bundle stock", http.StatusInternalServerError)
+		return
+	}
+	if err := s.enforceRailPublicationConsistency(); err != nil {
+		http.Error(w, "failed to sync rail publish state", http.StatusInternalServerError)
+		return
+	}
 
 	http.Redirect(w, r, fmt.Sprintf("/admin/books/%d?flash=%s", bookID, url.QueryEscape("Book updated successfully.")), http.StatusSeeOther)
 }
@@ -401,12 +409,21 @@ func (s *Server) updateBookInStockInline(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	if _, err := s.bookStore.SetInStock(bookID, inStock); err != nil {
+	updatedBook, err := s.bookStore.SetInStock(bookID, inStock)
+	if err != nil {
 		if errors.Is(err, books.ErrNotFound) {
 			http.NotFound(w, r)
 			return
 		}
 		http.Error(w, "failed to update in-stock", http.StatusInternalServerError)
+		return
+	}
+	if err := s.enforceBundleStockFromBook(updatedBook.ID, updatedBook.InStock); err != nil {
+		http.Error(w, "failed to sync bundle stock", http.StatusInternalServerError)
+		return
+	}
+	if err := s.enforceRailPublicationConsistency(); err != nil {
+		http.Error(w, "failed to sync rail publish state", http.StatusInternalServerError)
 		return
 	}
 
@@ -426,6 +443,10 @@ func (s *Server) publishBook(w http.ResponseWriter, r *http.Request, bookID int)
 		http.Error(w, "failed to publish book", http.StatusInternalServerError)
 		return
 	}
+	if err := s.enforceRailPublicationConsistency(); err != nil {
+		http.Error(w, "failed to sync rail publish state", http.StatusInternalServerError)
+		return
+	}
 	http.Redirect(w, r, bookPublishRedirectPath(r, bookID, "Book published successfully.", ""), http.StatusSeeOther)
 }
 
@@ -436,6 +457,10 @@ func (s *Server) unpublishBook(w http.ResponseWriter, r *http.Request, bookID in
 			return
 		}
 		http.Error(w, "failed to unpublish book", http.StatusInternalServerError)
+		return
+	}
+	if err := s.enforceRailPublicationConsistency(); err != nil {
+		http.Error(w, "failed to sync rail publish state", http.StatusInternalServerError)
 		return
 	}
 	http.Redirect(w, r, bookPublishRedirectPath(r, bookID, "Book unpublished successfully.", ""), http.StatusSeeOther)
