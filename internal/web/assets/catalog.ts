@@ -130,18 +130,24 @@ const createCard = (item: CatalogItem, rail: CatalogRail): HTMLElement => {
   }
   article.appendChild(media);
 
-  article.appendChild(appendText("h3", "catalog-card-title", item.title));
+  const body = document.createElement("div");
+  body.className = "catalog-card-body";
+
+  body.appendChild(appendText("h3", "catalog-card-title", item.title));
 
   const pricing = document.createElement("div");
   pricing.className = "catalog-price";
-  pricing.appendChild(appendText("span", "catalog-price-current", item.currentPriceText));
+  const pricingLine = document.createElement("div");
+  pricingLine.className = "catalog-price-line";
+  pricingLine.appendChild(appendText("span", "catalog-price-current", item.currentPriceText));
   if (item.originalPriceText) {
-    pricing.appendChild(appendText("span", "catalog-price-original", item.originalPriceText));
+    pricingLine.appendChild(appendText("span", "catalog-price-original", item.originalPriceText));
   }
+  pricing.appendChild(pricingLine);
   if (item.discountText) {
     pricing.appendChild(appendText("span", "catalog-price-discount", item.discountText));
   }
-  article.appendChild(pricing);
+  body.appendChild(pricing);
 
   const cta = document.createElement("button");
   cta.className = "cta";
@@ -171,7 +177,8 @@ const createCard = (item: CatalogItem, rail: CatalogRail): HTMLElement => {
       openWhatsApp(item.whatsAppMessage);
     });
   });
-  article.appendChild(cta);
+  body.appendChild(cta);
+  article.appendChild(body);
 
   return article;
 };

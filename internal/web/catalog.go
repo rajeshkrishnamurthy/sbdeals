@@ -279,7 +279,7 @@ var catalogPageTemplate = template.Must(template.New("catalog-page").Parse(`<!do
       font-size:1rem;
       line-height:1.6;
     }
-    .catalog-region { margin-top:28px; }
+    .catalog-region { margin-top:24px; }
     .catalog-loading, .catalog-error, .catalog-empty {
       background:var(--paper);
       border:1px solid var(--line);
@@ -303,18 +303,38 @@ var catalogPageTemplate = template.Must(template.New("catalog-page").Parse(`<!do
     .catalog-error button:hover, .cta:hover { background:var(--accent-strong); }
     .cta-content { display:inline-flex; align-items:center; gap:8px; }
     .cta-icon { width:16px; height:16px; display:block; }
-    .rail-list { display:grid; gap:28px; }
-    .rail-section { display:grid; gap:14px; }
-    .rail-header { display:flex; justify-content:space-between; align-items:flex-end; gap:16px; }
-    .rail-title { margin:0; font-size:1.4rem; letter-spacing:-0.02em; }
-    .rail-kind { color:var(--muted); font-size:0.85rem; text-transform:uppercase; letter-spacing:0.12em; }
+    .rail-list { display:grid; gap:18px; }
+    .rail-section {
+      display:grid;
+      gap:12px;
+      background:rgba(255,250,242,0.72);
+      border:1px solid rgba(217,205,185,0.72);
+      border-radius:22px;
+      padding:18px;
+      box-shadow:var(--card-shadow);
+      backdrop-filter:blur(4px);
+    }
+    .rail-header { display:flex; justify-content:space-between; align-items:center; gap:16px; }
+    .rail-title { margin:0; font-size:clamp(1.2rem, 2.2vw, 1.6rem); letter-spacing:-0.03em; }
+    .rail-kind {
+      color:var(--accent-strong);
+      font-size:0.74rem;
+      text-transform:uppercase;
+      letter-spacing:0.18em;
+      font-weight:700;
+      padding:6px 10px;
+      border-radius:999px;
+      background:rgba(15,118,110,0.08);
+      border:1px solid rgba(15,118,110,0.14);
+      white-space:nowrap;
+    }
     .rail-row {
       display:grid;
       grid-auto-flow:column;
-      grid-auto-columns:minmax(220px, 260px);
-      gap:14px;
+      grid-auto-columns:minmax(320px, 360px);
+      gap:12px;
       overflow-x:auto;
-      padding:4px 2px 8px;
+      padding:2px 2px 6px;
       scrollbar-width:thin;
       scroll-snap-type:x proximity;
       -webkit-overflow-scrolling:touch;
@@ -323,32 +343,34 @@ var catalogPageTemplate = template.Must(template.New("catalog-page").Parse(`<!do
       background:rgba(255,250,242,0.86);
       border:1px dashed var(--line);
       border-radius:18px;
-      padding:18px;
+      padding:16px 18px;
       color:var(--muted);
-      min-height:140px;
+      min-height:96px;
       display:flex;
       align-items:center;
     }
     .catalog-card {
       background:var(--paper);
       border:1px solid rgba(217,205,185,0.9);
-      border-radius:20px;
-      padding:14px;
+      border-radius:18px;
+      padding:12px;
       display:grid;
-      gap:14px;
+      grid-template-columns:110px minmax(0, 1fr);
+      gap:12px;
       min-height:100%;
       box-shadow:var(--card-shadow);
       scroll-snap-align:start;
     }
     .catalog-card-media {
       aspect-ratio:4 / 5;
-      border-radius:16px;
+      border-radius:14px;
       overflow:hidden;
       background:linear-gradient(180deg, rgba(15,118,110,0.08), rgba(17,94,89,0.18));
       border:1px solid rgba(217,205,185,0.8);
       display:flex;
       align-items:center;
       justify-content:center;
+      min-height:138px;
     }
     .catalog-card-media img {
       width:100%;
@@ -364,15 +386,31 @@ var catalogPageTemplate = template.Must(template.New("catalog-page").Parse(`<!do
       text-transform:uppercase;
       font-size:0.75rem;
     }
+    .catalog-card-body {
+      min-width:0;
+      display:grid;
+      align-content:start;
+      gap:10px;
+    }
     .catalog-card-title {
       margin:0;
       font-size:1rem;
-      line-height:1.35;
-      min-height:2.7em;
+      line-height:1.25;
+      min-height:2.5em;
     }
-    .catalog-price { display:flex; flex-wrap:wrap; gap:8px 10px; align-items:baseline; }
-    .catalog-price-current { font-size:1.15rem; font-weight:800; letter-spacing:-0.02em; }
-    .catalog-price-original { color:var(--muted); text-decoration:line-through; }
+    .catalog-price {
+      display:grid;
+      gap:6px;
+      align-content:start;
+    }
+    .catalog-price-line {
+      display:flex;
+      flex-wrap:wrap;
+      gap:6px 10px;
+      align-items:baseline;
+    }
+    .catalog-price-current { font-size:1.1rem; font-weight:800; letter-spacing:-0.02em; }
+    .catalog-price-original { color:var(--muted); text-decoration:line-through; font-size:0.95rem; }
     .catalog-price-discount {
       color:var(--accent-strong);
       font-weight:700;
@@ -380,6 +418,7 @@ var catalogPageTemplate = template.Must(template.New("catalog-page").Parse(`<!do
       padding:4px 8px;
       border-radius:999px;
       font-size:0.8rem;
+      justify-self:start;
     }
     .catalog-toast {
       position:fixed;
@@ -402,7 +441,20 @@ var catalogPageTemplate = template.Must(template.New("catalog-page").Parse(`<!do
     @media (max-width: 720px) {
       .page { width:min(96vw, 100%); padding-top:16px; }
       .hero { padding:20px; border-radius:20px; }
-      .rail-row { grid-auto-columns:minmax(190px, 78vw); }
+      .rail-section { padding:16px; }
+      .rail-header { align-items:flex-start; }
+      .rail-row { grid-auto-columns:minmax(280px, 86vw); }
+      .catalog-card { grid-template-columns:88px minmax(0, 1fr); gap:10px; }
+      .catalog-card-media { min-height:112px; }
+    }
+    @media (max-width: 540px) {
+      .rail-header { flex-direction:column; align-items:flex-start; }
+      .catalog-card { grid-template-columns:1fr; }
+      .catalog-card-media {
+        width:min(100%, 180px);
+        min-height:0;
+        justify-self:center;
+      }
     }
   </style>
 </head>
