@@ -79,10 +79,26 @@ func (s *Server) renderEnquiriesList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to load customers", http.StatusInternalServerError)
 		return
 	}
+	customerByID, customerAddressByID := s.buildEnquiryCustomerMaps(items, customerOptions)
+
+	vm := parseEnquiriesListQueryState(r.URL.Query())
+	vm.ActiveSection = "enquiries"
+	vm.SelectedStatus = status
+	vm.Rows = items
+	vm.CustomerOptions = customerOptions
+	vm.customerByID = customerByID
+	vm.customerAddressByID = customerAddressByID
+	if err := enquiriesListTemplate.Execute(w, vm); err != nil {
+		http.Error(w, "failed to render enquiries list", http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) buildEnquiryCustomerMaps(items []clicked.Enquiry, customerOptions []customers.ListItem) (map[int]customers.ListItem, map[int]string) {
 	customerByID := make(map[int]customers.ListItem, len(customerOptions))
 	for _, customer := range customerOptions {
 		customerByID[customer.ID] = customer
 	}
+
 	customerAddressByID := map[int]string{}
 	for _, item := range items {
 		if item.CustomerID <= 0 {
@@ -101,46 +117,41 @@ func (s *Server) renderEnquiriesList(w http.ResponseWriter, r *http.Request) {
 				ApartmentName: customer.ApartmentName,
 			}
 		}
-		if customer.Address != nil {
-			address := strings.TrimSpace(*customer.Address)
-			if address != "" {
-				customerAddressByID[item.CustomerID] = address
-			}
+		if customer.Address == nil {
+			continue
+		}
+		address := strings.TrimSpace(*customer.Address)
+		if address != "" {
+			customerAddressByID[item.CustomerID] = address
 		}
 	}
+	return customerByID, customerAddressByID
+}
 
-	vm := enquiriesListViewModel{
-		ActiveSection:        "enquiries",
-		SelectedStatus:       status,
-		Rows:                 items,
-		Flash:                strings.TrimSpace(r.URL.Query().Get("flash")),
-		ValidationToast:      strings.TrimSpace(r.URL.Query().Get("error")),
-		OpenConvertModal:     strings.TrimSpace(r.URL.Query().Get("open_convert_modal")) == "1",
-		ModalEnquiryID:       parseModalEnquiryID(r.URL.Query().Get("modal_enquiry_id")),
-		ModalCustomerID:      strings.TrimSpace(r.URL.Query().Get("customer_id")),
-		ModalQuickName:       strings.TrimSpace(r.URL.Query().Get("quick_customer_name")),
-		ModalQuickMobile:     strings.TrimSpace(r.URL.Query().Get("quick_customer_mobile")),
-		ModalNote:            strings.TrimSpace(r.URL.Query().Get("note")),
-		ModalSearch:          strings.TrimSpace(r.URL.Query().Get("customer_search")),
-		OpenOrderModal:       parseOptionalBool(r.URL.Query().Get("open_order_modal")),
-		OrderModalEnquiryID:  parseModalEnquiryID(r.URL.Query().Get("modal_order_enquiry_id")),
-		OrderModalCustomer:   strings.TrimSpace(r.URL.Query().Get("modal_order_customer_name")),
-		OrderModalMobile:     strings.TrimSpace(r.URL.Query().Get("modal_order_customer_mobile")),
-		OrderModalCity:       strings.TrimSpace(r.URL.Query().Get("modal_order_city")),
-		OrderModalApartment:  strings.TrimSpace(r.URL.Query().Get("modal_order_apartment")),
-		OrderModalHasAddress: parseOptionalBool(r.URL.Query().Get("modal_order_has_address")),
-		OrderModalAddressReq: parseOptionalBool(r.URL.Query().Get("modal_order_require_address")),
-		OrderModalAmount:     strings.TrimSpace(r.URL.Query().Get("order_amount")),
-		OrderModalOrderNote:  strings.TrimSpace(r.URL.Query().Get("note")),
-		OrderModalAddress:    strings.TrimSpace(r.URL.Query().Get("address")),
-		OrderAmountError:     strings.TrimSpace(r.URL.Query().Get("order_amount_error")),
-		OrderAddressError:    strings.TrimSpace(r.URL.Query().Get("address_error")),
-		CustomerOptions:      customerOptions,
-		customerByID:         customerByID,
-		customerAddressByID:  customerAddressByID,
-	}
-	if err := enquiriesListTemplate.Execute(w, vm); err != nil {
-		http.Error(w, "failed to render enquiries list", http.StatusInternalServerError)
+func parseEnquiriesListQueryState(query url.Values) enquiriesListViewModel {
+	return enquiriesListViewModel{
+		Flash:                strings.TrimSpace(query.Get("flash")),
+		ValidationToast:      strings.TrimSpace(query.Get("error")),
+		OpenConvertModal:     strings.TrimSpace(query.Get("open_convert_modal")) == "1",
+		ModalEnquiryID:       parseModalEnquiryID(query.Get("modal_enquiry_id")),
+		ModalCustomerID:      strings.TrimSpace(query.Get("customer_id")),
+		ModalQuickName:       strings.TrimSpace(query.Get("quick_customer_name")),
+		ModalQuickMobile:     strings.TrimSpace(query.Get("quick_customer_mobile")),
+		ModalNote:            strings.TrimSpace(query.Get("note")),
+		ModalSearch:          strings.TrimSpace(query.Get("customer_search")),
+		OpenOrderModal:       parseOptionalBool(query.Get("open_order_modal")),
+		OrderModalEnquiryID:  parseModalEnquiryID(query.Get("modal_order_enquiry_id")),
+		OrderModalCustomer:   strings.TrimSpace(query.Get("modal_order_customer_name")),
+		OrderModalMobile:     strings.TrimSpace(query.Get("modal_order_customer_mobile")),
+		OrderModalCity:       strings.TrimSpace(query.Get("modal_order_city")),
+		OrderModalApartment:  strings.TrimSpace(query.Get("modal_order_apartment")),
+		OrderModalHasAddress: parseOptionalBool(query.Get("modal_order_has_address")),
+		OrderModalAddressReq: parseOptionalBool(query.Get("modal_order_require_address")),
+		OrderModalAmount:     strings.TrimSpace(query.Get("order_amount")),
+		OrderModalOrderNote:  strings.TrimSpace(query.Get("note")),
+		OrderModalAddress:    strings.TrimSpace(query.Get("address")),
+		OrderAmountError:     strings.TrimSpace(query.Get("order_amount_error")),
+		OrderAddressError:    strings.TrimSpace(query.Get("address_error")),
 	}
 }
 
