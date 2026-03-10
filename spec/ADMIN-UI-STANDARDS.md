@@ -20,5 +20,20 @@ Purpose: keep the admin experience sleek and consistent across masters (Supplier
 ## Styling scope
 - This is standardization, not redesign: keep typography/spacing consistent with existing admin pages.
 
+## Switch toggles (admin lists)
+- For list-row boolean actions (for example `Published/Unpublished`, `In-stock`), use a **track-only switch toggle**.
+- Do not show `ON/OFF` text labels inside the control.
+- The control width must hug the visual switch track (no extra empty right-side capsule space).
+- Use color to indicate state:
+  - `ON`: green track
+  - `OFF`: neutral gray track
+- Keep a clear white knob and left/right knob movement to indicate state transition.
+- Keep any secondary metadata (for example recency like `(1d)`) outside the switch control.
+
+## Validation & error feedback (admin)
+- Validation errors should be shown as a **toast** message (clear, human-readable) at the time of submit/action.
+- Avoid silent failures or inline-only errors in MVP; toast should always appear.
+
 ## Acceptance check
 - Switching between `/admin/suppliers`, `/admin/books`, `/admin/bundles` does not change the left/right margins of the main table block (no visual jump).
+- Triggering a validation error shows a toast with an understandable message.
