@@ -33,6 +33,9 @@ func TestBundlesListRendersColumnsAndNav(t *testing.T) {
 			t.Fatalf("expected body to contain %q", check)
 		}
 	}
+	if !strings.Contains(body, "Apply Filters") || !strings.Contains(body, "Reset Filters") {
+		t.Fatalf("expected deterministic search controls in bundles list")
+	}
 	if strings.Contains(body, "Allowed condition(s)") {
 		t.Fatalf("did not expect allowed conditions list column")
 	}
@@ -48,6 +51,129 @@ func TestBundlesListRendersColumnsAndNav(t *testing.T) {
 	}
 	if !regexp.MustCompile(`\(\d+d\)`).MatchString(body) {
 		t.Fatalf("expected recency indicator like (Xd)")
+	}
+}
+
+func TestBundlesListApplyFiltersUsesDeterministicAND(t *testing.T) {
+	s, fixture := newBundleFilterTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/admin/bundles?apply=1&supplierId="+strconv.Itoa(fixture.SupplierAID)+"&category=Fiction&bundlePriceMin=450&bundlePriceMax=550&discountMin=44&discountMax=45&published=true&inStock=true&containsBook=alpha&containsBoxSet=false", nil)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Bundle Alpha") {
+		t.Fatalf("expected deterministic intersection result to include Bundle Alpha")
+	}
+	unexpected := []string{"Bundle Box", "Bundle Science", "Bundle OOS"}
+	for _, name := range unexpected {
+		if strings.Contains(body, name) {
+			t.Fatalf("did not expect %q in deterministic intersection result", name)
+		}
+	}
+}
+
+func TestBundlesListContainsBookMatchesTitleAndAuthor(t *testing.T) {
+	s, _ := newBundleFilterTestServer(t)
+
+	titleReq := httptest.NewRequest(http.MethodGet, "/admin/bundles?apply=1&containsBook=science", nil)
+	titleRR := httptest.NewRecorder()
+	s.Handler().ServeHTTP(titleRR, titleReq)
+	if titleRR.Code != http.StatusOK {
+		t.Fatalf("expected 200 for title query, got %d", titleRR.Code)
+	}
+	if !strings.Contains(titleRR.Body.String(), "Bundle Science") {
+		t.Fatalf("expected title query to match bundle by included book title")
+	}
+
+	authorReq := httptest.NewRequest(http.MethodGet, "/admin/bundles?apply=1&containsBook=nina", nil)
+	authorRR := httptest.NewRecorder()
+	s.Handler().ServeHTTP(authorRR, authorReq)
+	if authorRR.Code != http.StatusOK {
+		t.Fatalf("expected 200 for author query, got %d", authorRR.Code)
+	}
+	if !strings.Contains(authorRR.Body.String(), "Bundle Alpha") {
+		t.Fatalf("expected author query to match bundle by included book author")
+	}
+}
+
+func TestBundlesListContainsBoxSetTriState(t *testing.T) {
+	s, _ := newBundleFilterTestServer(t)
+
+	yesReq := httptest.NewRequest(http.MethodGet, "/admin/bundles?apply=1&containsBoxSet=true", nil)
+	yesRR := httptest.NewRecorder()
+	s.Handler().ServeHTTP(yesRR, yesReq)
+	if yesRR.Code != http.StatusOK {
+		t.Fatalf("expected 200 for containsBoxSet=true, got %d", yesRR.Code)
+	}
+	yesBody := yesRR.Body.String()
+	if !strings.Contains(yesBody, "Bundle Box") {
+		t.Fatalf("expected containsBoxSet=true to include box-set bundle")
+	}
+	if strings.Contains(yesBody, "Bundle Alpha") {
+		t.Fatalf("did not expect non-box-set bundle in containsBoxSet=true results")
+	}
+
+	noReq := httptest.NewRequest(http.MethodGet, "/admin/bundles?apply=1&containsBoxSet=false", nil)
+	noRR := httptest.NewRecorder()
+	s.Handler().ServeHTTP(noRR, noReq)
+	if noRR.Code != http.StatusOK {
+		t.Fatalf("expected 200 for containsBoxSet=false, got %d", noRR.Code)
+	}
+	noBody := noRR.Body.String()
+	if strings.Contains(noBody, "Bundle Box") {
+		t.Fatalf("did not expect box-set bundle in containsBoxSet=false results")
+	}
+	if !strings.Contains(noBody, "Bundle Alpha") {
+		t.Fatalf("expected non-box-set bundle in containsBoxSet=false results")
+	}
+}
+
+func TestBundlesListResetFiltersRestoresDefaultList(t *testing.T) {
+	s, fixture := newBundleFilterTestServer(t)
+	filteredReq := httptest.NewRequest(http.MethodGet, "/admin/bundles?apply=1&supplierId="+strconv.Itoa(fixture.SupplierAID)+"&containsBoxSet=true", nil)
+	filteredRR := httptest.NewRecorder()
+	s.Handler().ServeHTTP(filteredRR, filteredReq)
+	if filteredRR.Code != http.StatusOK {
+		t.Fatalf("expected 200 for filtered list, got %d", filteredRR.Code)
+	}
+	filteredBody := filteredRR.Body.String()
+	if !strings.Contains(filteredBody, "Bundle Box") || strings.Contains(filteredBody, "Bundle Science") {
+		t.Fatalf("expected filtered list to include only matching subset")
+	}
+
+	resetReq := httptest.NewRequest(http.MethodGet, "/admin/bundles", nil)
+	resetRR := httptest.NewRecorder()
+	s.Handler().ServeHTTP(resetRR, resetReq)
+	if resetRR.Code != http.StatusOK {
+		t.Fatalf("expected 200 for reset list, got %d", resetRR.Code)
+	}
+	resetBody := resetRR.Body.String()
+	if !strings.Contains(resetBody, "Bundle Box") || !strings.Contains(resetBody, "Bundle Science") {
+		t.Fatalf("expected reset list to restore unfiltered rows")
+	}
+}
+
+func TestBundlesListInvalidNumericFiltersShowToastAndBlockApply(t *testing.T) {
+	s, _ := newBundleFilterTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/admin/bundles?apply=1&bundlePriceMin=-1", nil)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `class="toast-error"`) {
+		t.Fatalf("expected toast error for invalid numeric filter")
+	}
+	if !strings.Contains(body, "Bundle price minimum must be a non-negative number.") {
+		t.Fatalf("expected numeric validation message in toast")
+	}
+	if !strings.Contains(body, "Bundle Alpha") || !strings.Contains(body, "Bundle Science") {
+		t.Fatalf("expected apply to be blocked and default list to be shown")
 	}
 }
 
@@ -383,6 +509,95 @@ func newBundleStores(t *testing.T) (*suppliers.MemoryStore, *bundles.MemoryStore
 	return supplierStore, bundles.NewMemoryStore(supplierNames, pickerBooks)
 }
 
+type bundleFilterFixture struct {
+	SupplierAID int
+	SupplierBID int
+}
+
+func newBundleFilterTestServer(t *testing.T) (*Server, bundleFilterFixture) {
+	t.Helper()
+
+	supplierStore := suppliers.NewMemoryStore()
+	supplierA, err := supplierStore.Create(suppliers.Input{Name: "Supplier A", WhatsApp: "+91-1", Location: "Bengaluru"})
+	if err != nil {
+		t.Fatalf("create supplier A failed: %v", err)
+	}
+	supplierB, err := supplierStore.Create(suppliers.Input{Name: "Supplier B", WhatsApp: "+91-2", Location: "Chennai"})
+	if err != nil {
+		t.Fatalf("create supplier B failed: %v", err)
+	}
+
+	supplierNames := map[int]string{supplierA.ID: supplierA.Name, supplierB.ID: supplierB.Name}
+	pickerBooks := []bundles.PickerBook{
+		{BookID: 10, Title: "Alpha Hero", Author: "Nina West", SupplierID: supplierA.ID, Category: "Fiction", Condition: "Very good", MRP: 400, MyPrice: 250, InStock: true},
+		{BookID: 11, Title: "Gamma Tales", Author: "Nina West", SupplierID: supplierA.ID, Category: "Fiction", Condition: "Good as new", MRP: 500, MyPrice: 300, InStock: true},
+		{BookID: 12, Title: "Hidden Item", Author: "Other Author", SupplierID: supplierA.ID, Category: "Fiction", Condition: "Used", MRP: 350, MyPrice: 220, InStock: false},
+		{BookID: 30, Title: "Box Saga", Author: "Box Author", SupplierID: supplierA.ID, IsBoxSet: true, Category: "Fiction", Condition: "Very good", MRP: 600, MyPrice: 350, InStock: true},
+		{BookID: 20, Title: "Science 101", Author: "Dr Zee", SupplierID: supplierB.ID, Category: "Non-Fiction", Condition: "Very good", MRP: 280, MyPrice: 180, InStock: true},
+	}
+	bundleStore := bundles.NewMemoryStore(supplierNames, pickerBooks)
+
+	bundleAlpha, err := bundleStore.Create(bundles.CreateInput{
+		Name:              "Bundle Alpha",
+		SupplierID:        supplierA.ID,
+		Category:          "Fiction",
+		AllowedConditions: []string{"Very good", "Good as new"},
+		BookIDs:           []int{10, 11},
+		BundlePrice:       500,
+	})
+	if err != nil {
+		t.Fatalf("create Bundle Alpha failed: %v", err)
+	}
+	if _, err := bundleStore.Publish(bundleAlpha.ID); err != nil {
+		t.Fatalf("publish Bundle Alpha failed: %v", err)
+	}
+
+	bundleBox, err := bundleStore.Create(bundles.CreateInput{
+		Name:              "Bundle Box",
+		SupplierID:        supplierA.ID,
+		Category:          "Fiction",
+		AllowedConditions: []string{"Very good"},
+		BookIDs:           []int{30},
+		BundlePrice:       300,
+	})
+	if err != nil {
+		t.Fatalf("create Bundle Box failed: %v", err)
+	}
+	if _, err := bundleStore.Publish(bundleBox.ID); err != nil {
+		t.Fatalf("publish Bundle Box failed: %v", err)
+	}
+
+	bundleScience, err := bundleStore.Create(bundles.CreateInput{
+		Name:              "Bundle Science",
+		SupplierID:        supplierB.ID,
+		Category:          "Non-Fiction",
+		AllowedConditions: []string{"Very good"},
+		BookIDs:           []int{20},
+		BundlePrice:       170,
+	})
+	if err != nil {
+		t.Fatalf("create Bundle Science failed: %v", err)
+	}
+	if _, err := bundleStore.Publish(bundleScience.ID); err != nil {
+		t.Fatalf("publish Bundle Science failed: %v", err)
+	}
+
+	_, err = bundleStore.Create(bundles.CreateInput{
+		Name:              "Bundle OOS",
+		SupplierID:        supplierA.ID,
+		Category:          "Fiction",
+		AllowedConditions: []string{"Very good", "Used"},
+		BookIDs:           []int{10, 12},
+		BundlePrice:       350,
+	})
+	if err != nil {
+		t.Fatalf("create Bundle OOS failed: %v", err)
+	}
+
+	s := NewServerWithStores(supplierStore, books.NewMemoryStore(), bundleStore)
+	return s, bundleFilterFixture{SupplierAID: supplierA.ID, SupplierBID: supplierB.ID}
+}
+
 func TestBundlePathRouteRoundTrip(t *testing.T) {
 	id, action, ok := parseBundlePath("/admin/bundles/123")
 	if !ok || id != 123 || action != "" {
@@ -602,8 +817,12 @@ func (bundleOutOfStockPublishStore) Update(id int, input bundles.UpdateInput) (b
 func (bundleOutOfStockPublishStore) Publish(id int) (bundles.Bundle, error) {
 	return bundles.Bundle{}, bundles.ErrCannotPublishOutOfStock
 }
-func (bundleOutOfStockPublishStore) Unpublish(id int) (bundles.Bundle, error) { return bundles.Bundle{}, nil }
+func (bundleOutOfStockPublishStore) Unpublish(id int) (bundles.Bundle, error) {
+	return bundles.Bundle{}, nil
+}
 func (bundleOutOfStockPublishStore) ListBooksForPicker() ([]bundles.PickerBook, error) {
 	return nil, nil
 }
-func (bundleOutOfStockPublishStore) GetImage(id int) (bundles.Image, error) { return bundles.Image{}, nil }
+func (bundleOutOfStockPublishStore) GetImage(id int) (bundles.Image, error) {
+	return bundles.Image{}, nil
+}

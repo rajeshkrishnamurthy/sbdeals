@@ -132,16 +132,312 @@ func (s *Server) renderBundlesList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to load bundles", http.StatusInternalServerError)
 		return
 	}
+	suppliersList, err := s.store.List()
+	if err != nil {
+		http.Error(w, "failed to load suppliers", http.StatusInternalServerError)
+		return
+	}
+	filterInput := readBundlesListFilterInput(r.URL.Query())
+	validationToast := strings.TrimSpace(r.URL.Query().Get("error"))
+	if shouldApplyBundlesListFilters(r.URL.Query()) {
+		filtered, filterErr := s.filterBundlesListItems(items, filterInput, suppliersList)
+		if filterErr == "" {
+			items = filtered
+		} else if validationToast == "" {
+			validationToast = filterErr
+		}
+	}
 
 	view := bundlesListViewModel{
 		Flash:           r.URL.Query().Get("flash"),
-		ValidationToast: strings.TrimSpace(r.URL.Query().Get("error")),
+		ValidationToast: validationToast,
 		ActiveSection:   "bundles",
 		Bundles:         items,
+		FilterInput:     filterInput,
+		SupplierOptions: suppliersList,
+		CategoryOptions: bookCategoryOptions,
 	}
 	if err := bundlesListTemplate.Execute(w, view); err != nil {
 		http.Error(w, "failed to render bundles list", http.StatusInternalServerError)
 	}
+}
+
+func shouldApplyBundlesListFilters(query url.Values) bool {
+	return strings.TrimSpace(query.Get("apply")) != ""
+}
+
+func readBundlesListFilterInput(query url.Values) bundlesListFilterInput {
+	return bundlesListFilterInput{
+		SupplierID:     strings.TrimSpace(query.Get("supplierId")),
+		Category:       strings.TrimSpace(query.Get("category")),
+		BundlePriceMin: strings.TrimSpace(query.Get("bundlePriceMin")),
+		BundlePriceMax: strings.TrimSpace(query.Get("bundlePriceMax")),
+		DiscountMin:    strings.TrimSpace(query.Get("discountMin")),
+		DiscountMax:    strings.TrimSpace(query.Get("discountMax")),
+		Published:      strings.TrimSpace(query.Get("published")),
+		InStock:        strings.TrimSpace(query.Get("inStock")),
+		ContainsBook:   strings.TrimSpace(query.Get("containsBook")),
+		ContainsBoxSet: strings.TrimSpace(query.Get("containsBoxSet")),
+	}
+}
+
+func (s *Server) filterBundlesListItems(items []bundles.ListItem, input bundlesListFilterInput, suppliersList []suppliers.Supplier) ([]bundles.ListItem, string) {
+	criteria, errText := parseBundlesListFilterCriteria(input, suppliersList)
+	if errText != "" {
+		return nil, errText
+	}
+
+	filtered := make([]bundles.ListItem, 0, len(items))
+	for _, item := range items {
+		detail, errText := s.loadBundleFilterDetail(item.ID, criteria)
+		if errText != "" {
+			return nil, errText
+		}
+		if !matchesBundlesListFilters(item, detail, criteria) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered, ""
+}
+
+func (s *Server) loadBundleFilterDetail(bundleID int, criteria bundlesListFilterCriteria) (*bundles.Bundle, string) {
+	if !criteria.NeedsBundleDetail {
+		return nil, ""
+	}
+	detail, err := s.bundleStore.Get(bundleID)
+	if errors.Is(err, bundles.ErrNotFound) {
+		return nil, ""
+	}
+	if err != nil {
+		return nil, "Failed to apply bundle filters."
+	}
+	return &detail, ""
+}
+
+type bundlesListFilterInput struct {
+	SupplierID     string
+	Category       string
+	BundlePriceMin string
+	BundlePriceMax string
+	DiscountMin    string
+	DiscountMax    string
+	Published      string
+	InStock        string
+	ContainsBook   string
+	ContainsBoxSet string
+}
+
+type bundlesListFilterCriteria struct {
+	SupplierID             *int
+	Category               string
+	BundlePriceFilter      bool
+	BundlePriceMin         float64
+	BundlePriceMax         float64
+	DiscountFilter         bool
+	DiscountMin            float64
+	DiscountMax            float64
+	Published              *bool
+	InStock                *bool
+	ContainsBook           string
+	ContainsBoxSet         *bool
+	NeedsBundleDetail      bool
+	ContainsBookLowerQuery string
+}
+
+func parseBundlesListFilterCriteria(input bundlesListFilterInput, suppliersList []suppliers.Supplier) (bundlesListFilterCriteria, string) {
+	criteria := bundlesListFilterCriteria{
+		Category:               input.Category,
+		ContainsBook:           input.ContainsBook,
+		ContainsBookLowerQuery: strings.ToLower(input.ContainsBook),
+	}
+
+	supplierID, errText := parseOptionalSupplierFilter(input.SupplierID, suppliersList)
+	if errText != "" {
+		return bundlesListFilterCriteria{}, errText
+	}
+	criteria.SupplierID = supplierID
+
+	if criteria.Category != "" && validateOption(criteria.Category, bookCategoryOptions, "", "invalid") != "" {
+		return bundlesListFilterCriteria{}, "Please choose a valid category."
+	}
+
+	bundlePriceFilter, bundlePriceMin, bundlePriceMax, errText := parseBundlesListPriceRange(input.BundlePriceMin, input.BundlePriceMax, "Bundle price")
+	if errText != "" {
+		return bundlesListFilterCriteria{}, errText
+	}
+	criteria.BundlePriceFilter = bundlePriceFilter
+	criteria.BundlePriceMin = bundlePriceMin
+	criteria.BundlePriceMax = bundlePriceMax
+
+	discountFilter, discountMin, discountMax, errText := parseBundlesListPriceRange(input.DiscountMin, input.DiscountMax, "Discount")
+	if errText != "" {
+		return bundlesListFilterCriteria{}, errText
+	}
+	criteria.DiscountFilter = discountFilter
+	criteria.DiscountMin = discountMin
+	criteria.DiscountMax = discountMax
+
+	published, errText := parseBundlesListTriState(input.Published, "Published")
+	if errText != "" {
+		return bundlesListFilterCriteria{}, errText
+	}
+	criteria.Published = published
+
+	inStock, errText := parseBundlesListTriState(input.InStock, "In-stock")
+	if errText != "" {
+		return bundlesListFilterCriteria{}, errText
+	}
+	criteria.InStock = inStock
+
+	containsBoxSet, errText := parseBundlesListTriState(input.ContainsBoxSet, "Contains box-set")
+	if errText != "" {
+		return bundlesListFilterCriteria{}, errText
+	}
+	criteria.ContainsBoxSet = containsBoxSet
+
+	criteria.NeedsBundleDetail = criteria.SupplierID != nil ||
+		criteria.InStock != nil ||
+		criteria.ContainsBookLowerQuery != "" ||
+		criteria.ContainsBoxSet != nil
+
+	return criteria, ""
+}
+
+func parseBundlesListTriState(raw string, label string) (*bool, string) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "any":
+		return nil, ""
+	case "yes", "true":
+		value := true
+		return &value, ""
+	case "no", "false":
+		value := false
+		return &value, ""
+	default:
+		return nil, fmt.Sprintf("Please choose a valid %s filter value.", label)
+	}
+}
+
+func parseBundlesListPriceRange(minRaw string, maxRaw string, label string) (bool, float64, float64, string) {
+	minValue, errText := parseBundlesListNonNegativeNumber(minRaw, fmt.Sprintf("%s minimum", label))
+	if errText != "" {
+		return false, 0, 0, errText
+	}
+	maxValue, errText := parseBundlesListNonNegativeNumber(maxRaw, fmt.Sprintf("%s maximum", label))
+	if errText != "" {
+		return false, 0, 0, errText
+	}
+	if minValue == nil && maxValue == nil {
+		return false, 0, 0, ""
+	}
+
+	min := 0.0
+	max := math.MaxFloat64
+	if minValue != nil {
+		min = *minValue
+	}
+	if maxValue != nil {
+		max = *maxValue
+	}
+	if min > max {
+		return false, 0, 0, fmt.Sprintf("%s minimum cannot exceed maximum.", label)
+	}
+	return true, min, max, ""
+}
+
+func parseBundlesListNonNegativeNumber(raw string, label string) (*float64, string) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return nil, ""
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil || parsed < 0 {
+		return nil, fmt.Sprintf("%s must be a non-negative number.", label)
+	}
+	return &parsed, ""
+}
+
+func matchesBundlesListFilters(item bundles.ListItem, detail *bundles.Bundle, criteria bundlesListFilterCriteria) bool {
+	return matchesBundlesListSimpleFilters(item, criteria) &&
+		matchesBundlesListStatusAndPriceFilters(item, detail, criteria) &&
+		matchesBundlesListBookFilters(detail, criteria)
+}
+
+func matchesBundlesListSimpleFilters(item bundles.ListItem, criteria bundlesListFilterCriteria) bool {
+	if criteria.Category != "" && item.Category != criteria.Category {
+		return false
+	}
+	if criteria.Published != nil && item.IsPublished != *criteria.Published {
+		return false
+	}
+	if criteria.BundlePriceFilter && !withinRange(item.BundlePrice, criteria.BundlePriceMin, criteria.BundlePriceMax) {
+		return false
+	}
+	return true
+}
+
+func matchesBundlesListStatusAndPriceFilters(item bundles.ListItem, detail *bundles.Bundle, criteria bundlesListFilterCriteria) bool {
+	if criteria.DiscountFilter {
+		discount := computeBundleDiscountPct(item.BundleMRP, item.BundlePrice)
+		if !withinRange(discount, criteria.DiscountMin, criteria.DiscountMax) {
+			return false
+		}
+	}
+	if criteria.SupplierID != nil {
+		if detail == nil || detail.SupplierID != *criteria.SupplierID {
+			return false
+		}
+	}
+	if criteria.InStock != nil {
+		if detail == nil || detail.InStock != *criteria.InStock {
+			return false
+		}
+	}
+	return true
+}
+
+func matchesBundlesListBookFilters(detail *bundles.Bundle, criteria bundlesListFilterCriteria) bool {
+	if criteria.ContainsBookLowerQuery == "" && criteria.ContainsBoxSet == nil {
+		return true
+	}
+	if detail == nil {
+		return false
+	}
+	if criteria.ContainsBookLowerQuery != "" && !bundleContainsBook(detail.Books, criteria.ContainsBookLowerQuery) {
+		return false
+	}
+	if criteria.ContainsBoxSet != nil && bundleContainsBoxSet(detail.Books) != *criteria.ContainsBoxSet {
+		return false
+	}
+	return true
+}
+
+func bundleContainsBook(booksList []bundles.BundleBook, query string) bool {
+	for _, book := range booksList {
+		title := strings.ToLower(strings.TrimSpace(book.Title))
+		author := strings.ToLower(strings.TrimSpace(book.Author))
+		if strings.Contains(title, query) || strings.Contains(author, query) {
+			return true
+		}
+	}
+	return false
+}
+
+func bundleContainsBoxSet(booksList []bundles.BundleBook) bool {
+	for _, book := range booksList {
+		if book.IsBoxSet {
+			return true
+		}
+	}
+	return false
+}
+
+func computeBundleDiscountPct(bundleMRP float64, bundlePrice float64) float64 {
+	if bundleMRP <= 0 {
+		return 0
+	}
+	return ((bundleMRP - bundlePrice) / bundleMRP) * 100
 }
 
 func (s *Server) createBundle(w http.ResponseWriter, r *http.Request) {
@@ -766,6 +1062,38 @@ type bundlesListViewModel struct {
 	ValidationToast string
 	ActiveSection   string
 	Bundles         []bundles.ListItem
+	FilterInput     bundlesListFilterInput
+	SupplierOptions []suppliers.Supplier
+	CategoryOptions []string
+}
+
+func (m bundlesListViewModel) SupplierSelected(value int) bool {
+	return m.FilterInput.SupplierID == strconv.Itoa(value)
+}
+
+func (m bundlesListViewModel) CategorySelected(value string) bool {
+	return m.FilterInput.Category == value
+}
+
+func (m bundlesListViewModel) PublishedSelected(value string) bool {
+	return bundlesListTriStateSelected(m.FilterInput.Published, value)
+}
+
+func (m bundlesListViewModel) InStockSelected(value string) bool {
+	return bundlesListTriStateSelected(m.FilterInput.InStock, value)
+}
+
+func (m bundlesListViewModel) ContainsBoxSetSelected(value string) bool {
+	return bundlesListTriStateSelected(m.FilterInput.ContainsBoxSet, value)
+}
+
+func bundlesListTriStateSelected(current string, target string) bool {
+	currentValue := strings.TrimSpace(strings.ToLower(current))
+	targetValue := strings.TrimSpace(strings.ToLower(target))
+	if currentValue == "" && targetValue == "any" {
+		return true
+	}
+	return currentValue == targetValue
 }
 
 type bundleSummaryViewModel struct {
@@ -930,6 +1258,13 @@ var bundlesListTemplate = template.Must(template.New("bundles-list").Funcs(templ
     .admin-nav-link.active { background:#e6f4f2; color:#0a5f57; }
     .toolbar { display:flex; align-items:center; justify-content:space-between; margin:16px 0; }
     .button { background: var(--accent); color:white; padding:10px 14px; border-radius:8px; text-decoration:none; font-weight:600; border:none; }
+    .filters { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin:0 0 12px; }
+    .filters-grid { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:10px; }
+    .filters-field label { display:block; font-size:0.85rem; color:var(--muted); margin-bottom:4px; }
+    .filters-field input, .filters-field select { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font:inherit; }
+    .range-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .filters-actions { margin-top:10px; display:flex; gap:10px; align-items:center; }
+    .secondary { color:var(--accent); text-decoration:none; font-weight:600; }
     table { width:100%; border-collapse:collapse; background: var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
     th, td { padding:10px; text-align:left; border-bottom:1px solid var(--line); vertical-align:middle; }
     th { font-size:0.9rem; color:var(--muted); }
@@ -972,6 +1307,12 @@ var bundlesListTemplate = template.Must(template.New("bundles-list").Funcs(templ
     .thumb-box { width:32px; height:48px; border:1px solid #d4dce6; background:#f2f4f7; display:flex; align-items:center; justify-content:center; border-radius:4px; }
     .thumb-image { width:32px; height:48px; object-fit:contain; object-position:center; display:block; }
     .thumb-placeholder { font-size:9px; color:#6b7280; text-align:center; line-height:1.1; }
+    @media (max-width: 960px) {
+      .filters-grid { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 640px) {
+      .filters-grid { grid-template-columns:1fr; }
+    }
   </style>
 </head>
 <body>
@@ -985,6 +1326,74 @@ var bundlesListTemplate = template.Must(template.New("bundles-list").Funcs(templ
     </div>
     {{if .Flash}}<p class="flash">{{.Flash}}</p>{{end}}
     {{if .ValidationToast}}<p class="toast-error" role="alert">{{.ValidationToast}}</p>{{end}}
+    <form class="filters" method="get" action="/admin/bundles">
+      <div class="filters-grid">
+        <div class="filters-field">
+          <label for="filter-supplier">Supplier</label>
+          <select id="filter-supplier" name="supplierId">
+            <option value="">Any</option>
+            {{range .SupplierOptions}}
+            <option value="{{.ID}}" {{if $.SupplierSelected .ID}}selected{{end}}>{{.Name}}</option>
+            {{end}}
+          </select>
+        </div>
+        <div class="filters-field">
+          <label for="filter-category">Category</label>
+          <select id="filter-category" name="category">
+            <option value="">Any</option>
+            {{range .CategoryOptions}}
+            <option value="{{.}}" {{if $.CategorySelected .}}selected{{end}}>{{.}}</option>
+            {{end}}
+          </select>
+        </div>
+        <div class="filters-field">
+          <label>Bundle Price range</label>
+          <div class="range-grid">
+            <input name="bundlePriceMin" value="{{.FilterInput.BundlePriceMin}}" placeholder="Min">
+            <input name="bundlePriceMax" value="{{.FilterInput.BundlePriceMax}}" placeholder="Max">
+          </div>
+        </div>
+        <div class="filters-field">
+          <label>Discount % range</label>
+          <div class="range-grid">
+            <input name="discountMin" value="{{.FilterInput.DiscountMin}}" placeholder="Min">
+            <input name="discountMax" value="{{.FilterInput.DiscountMax}}" placeholder="Max">
+          </div>
+        </div>
+        <div class="filters-field">
+          <label for="filter-published">Published</label>
+          <select id="filter-published" name="published">
+            <option value="any" {{if .PublishedSelected "any"}}selected{{end}}>Any</option>
+            <option value="true" {{if .PublishedSelected "true"}}selected{{end}}>Yes</option>
+            <option value="false" {{if .PublishedSelected "false"}}selected{{end}}>No</option>
+          </select>
+        </div>
+        <div class="filters-field">
+          <label for="filter-in-stock">In-stock</label>
+          <select id="filter-in-stock" name="inStock">
+            <option value="any" {{if .InStockSelected "any"}}selected{{end}}>Any</option>
+            <option value="true" {{if .InStockSelected "true"}}selected{{end}}>Yes</option>
+            <option value="false" {{if .InStockSelected "false"}}selected{{end}}>No</option>
+          </select>
+        </div>
+        <div class="filters-field">
+          <label for="filter-contains-book">Contains book</label>
+          <input id="filter-contains-book" name="containsBook" value="{{.FilterInput.ContainsBook}}" placeholder="Book title or author contains">
+        </div>
+        <div class="filters-field">
+          <label for="filter-contains-box-set">Contains book with box-set</label>
+          <select id="filter-contains-box-set" name="containsBoxSet">
+            <option value="any" {{if .ContainsBoxSetSelected "any"}}selected{{end}}>Any</option>
+            <option value="true" {{if .ContainsBoxSetSelected "true"}}selected{{end}}>Yes</option>
+            <option value="false" {{if .ContainsBoxSetSelected "false"}}selected{{end}}>No</option>
+          </select>
+        </div>
+      </div>
+      <div class="filters-actions">
+        <button class="button" type="submit" name="apply" value="1">Apply Filters</button>
+        <a class="secondary" href="/admin/bundles">Reset Filters</a>
+      </div>
+    </form>
     <table>
       <thead>
         <tr>
